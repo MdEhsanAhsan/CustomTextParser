@@ -123,19 +123,4 @@ FIELD",C:\Images\img2.tif,Document B
 ## 🤝 Contributing
 
 Contributions are welcome! Whether you want to improve the parser logic, add features like CSV export, or build a GUI version, feel free to open a PR or issue.
-
----
-
-## 📄 License
-
-MIT License – see `LICENSE` for details.
-
----
-
-Let me know if you'd like me to generate:
-- The actual Python script (`dat_parser.py`)
-- CI/CD workflow config
-- Packaging for PyPI or standalone executable
-- Logo or documentation site
-
 Happy coding! 🚀
