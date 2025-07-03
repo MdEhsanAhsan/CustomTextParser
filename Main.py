@@ -1,15 +1,35 @@
+class CharReader:
+    def __init__(self, file):
+        self.file = file
+        self.lookahead = None
+
+    def read(self):
+        if self.lookahead is not None:
+            char = self.lookahead
+            self.lookahead = None
+            return char
+        return self.file.read(1)
+
+    def peek(self):
+        if self.lookahead is None:
+            self.lookahead = self.file.read(1)
+        return self.lookahead
+
+
 def read_dat_file_smart(file_path):
     """
     Reads a DAT file smartly, ignoring newlines that occur inside quoted fields.
     Yields complete logical lines.
     """
     QUOTE_CHAR = '\xfe'
+    FIELD_SEP = '\x14'
     in_quote = False
 
     with open(file_path, 'r', encoding='utf-8') as f:
         buffer = ''
+        reader = CharReader(f)
         while True:
-            char = f.read(1)
+            char = reader.read()
             if not char:
                 # End of file
                 if buffer:
@@ -17,16 +37,23 @@ def read_dat_file_smart(file_path):
                 break
 
             if char == QUOTE_CHAR:
-                in_quote = not in_quote
-                buffer += char
-
-            elif char == '\n':
-                # Check if inside quote
+                # Peek next character
+                next_char = reader.peek()
                 if in_quote:
-                    # Embedded newline inside quoted field → keep going
+                    if next_char == FIELD_SEP or next_char == '\n' or next_char == '\r':
+                        # Likely end of quoted field
+                        in_quote = False
+                        buffer += char
+            elif char == FIELD_SEP:
+                if in_quote:
                     buffer += char
                 else:
-                    # Real end of line → yield it
+                    buffer += char
+
+            elif char == '\n':
+                if in_quote:
+                    buffer += char
+                else:
                     yield buffer.strip('\r\n')
                     buffer = ''
 
