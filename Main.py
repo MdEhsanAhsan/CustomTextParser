@@ -16,16 +16,18 @@ class CharReader:
         if self.lookahead is None:
             self.lookahead = self.file.read(1)
         return self.lookahead
+    
+#Global constants for the DAT file format
+# These constants are used to identify the structure of the DAT file.
 
+QUOTE_CHAR = '\xfe' # Quote character used to enclose fields.
+FIELD_SEP = '\x14' # Data Control 4 (DC4) character, used as field separator.
 
 def read_dat_file_smart(file_path):
     """
     Reads a DAT file smartly, ignoring newlines that occur inside quoted fields.
     Yields complete logical lines.
     """
-    QUOTE_CHAR = '\xfe'
-    FIELD_SEP = '\x14'
-
     with open(file_path, 'r', encoding='utf-8') as f:
         reader = CharReader(f)
         buffer = ''
