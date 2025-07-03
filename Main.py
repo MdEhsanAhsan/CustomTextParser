@@ -4,6 +4,7 @@ class CharReader:
         self.lookahead = None
 
     def read(self):
+        """Reads the next character from the file."""
         if self.lookahead is not None:
             char = self.lookahead
             self.lookahead = None
@@ -11,6 +12,7 @@ class CharReader:
         return self.file.read(1)
 
     def peek(self):
+        """Peeks at the next character without consuming it."""
         if self.lookahead is None:
             self.lookahead = self.file.read(1)
         return self.lookahead
@@ -23,42 +25,46 @@ def read_dat_file_smart(file_path):
     """
     QUOTE_CHAR = '\xfe'
     FIELD_SEP = '\x14'
-    in_quote = True
 
     with open(file_path, 'r', encoding='utf-8') as f:
-        buffer = ''
         reader = CharReader(f)
+        buffer = ''
+        in_quote = True  # Start in quoted state
+
         while True:
             char = reader.read()
+            next_char = reader.peek()
             if not char:
                 # End of file
                 if buffer:
                     yield buffer.strip('\r\n')
                 break
 
-            if char == QUOTE_CHAR:
-                # Peek next character
-                next_char = reader.peek()
-                if in_quote:
-                    if next_char == FIELD_SEP :#or next_char == '\n' or next_char == '\r':
-                        # Likely end of quoted field
-                        in_quote = False
-                    buffer += char
+            if char == QUOTE_CHAR and next_char == FIELD_SEP:
+                # Toggle quote state
+                in_quote = not in_quote
+                buffer += char
+
             elif char == FIELD_SEP:
                 if in_quote:
+                    # Inside quoted field → keep DC4
                     buffer += char
                 else:
+                    # Outside quoted field → end of field
                     buffer += char
 
             elif char == '\n':
                 if in_quote:
+                    # Inside quoted field → keep newline
                     buffer += char
                 else:
+                    # Real end of line → yield it
                     yield buffer.strip('\r\n')
                     buffer = ''
 
             else:
                 buffer += char
+
 
 
 # Example usage
