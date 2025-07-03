@@ -113,10 +113,8 @@ FIELD",C:\Images\img2.tif,Document B
 ## 💡 Future Ideas
 
 - [ ] GUI version using Tkinter or PyQt
-- [ ] Import into SQLite DB
 - [ ] Export DAT files back to original format
 - [ ] Support for other encodings (Latin-1, UTF-16LE)
-- [ ] Integration with DB Browser for SQLite
 
 ---
 
