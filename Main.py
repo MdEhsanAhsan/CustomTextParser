@@ -40,7 +40,7 @@ def read_dat_file_smart(file_path):
                 # Peek next character
                 next_char = reader.peek()
                 if in_quote:
-                    if next_char == FIELD_SEP or next_char == '\n' or next_char == '\r':
+                    if next_char == FIELD_SEP :#or next_char == '\n' or next_char == '\r':
                         # Likely end of quoted field
                         in_quote = False
                     buffer += char
