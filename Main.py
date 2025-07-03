@@ -68,7 +68,6 @@ def read_dat_file_smart(file_path):
                 buffer += char
 
 
-
 # Example usage
 if __name__ == '__main__':
     file_path = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Test2.dat"
