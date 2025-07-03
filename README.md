@@ -42,8 +42,8 @@ You can run this script directly without installation:
 
 ```bash
 git clone https://github.com/yourusername/concordance-dat-parser.git
-cd concordance-dat-parser
-python dat_parser.py
+cd CustomTextParser
+python main.py
 ```
 
 No pip install required!
