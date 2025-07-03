@@ -23,7 +23,7 @@ def read_dat_file_smart(file_path):
     """
     QUOTE_CHAR = '\xfe'
     FIELD_SEP = '\x14'
-    in_quote = False
+    in_quote = True
 
     with open(file_path, 'r', encoding='utf-8') as f:
         buffer = ''
@@ -43,7 +43,7 @@ def read_dat_file_smart(file_path):
                     if next_char == FIELD_SEP or next_char == '\n' or next_char == '\r':
                         # Likely end of quoted field
                         in_quote = False
-                        buffer += char
+                    buffer += char
             elif char == FIELD_SEP:
                 if in_quote:
                     buffer += char
