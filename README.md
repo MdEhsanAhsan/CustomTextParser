@@ -1,6 +1,6 @@
 # Concordance DAT File Parser
 
-A lightweight and robust parser for **Concordance DAT files**, designed to make working with these legacy flat-file databases easier — especially for data cleanup, transformation, and analysis tasks.
+A lightweight and robust parser for **Concordance DAT files**, designed to make working with these legacy flat-file easier — especially for data cleanup, transformation, and analysis tasks.
 
 ## 📌 Why This Tool Exists
 
