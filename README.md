@@ -13,7 +13,7 @@ Concordance DAT files are commonly used in **legal technology and eDiscovery** w
 This tool aims to solve that by:
 - Parsing DAT files accurately
 - Validating structure using headers
-- Exporting to CSV or SQLite
+- Exporting to CSV or DAT
 - Optionally isolating malformed lines for review
 
 ---
