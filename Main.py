@@ -73,7 +73,8 @@ def read_dat_file_smart(file_path):
                 buffer += char
 
 if __name__ == '__main__':
-    file_path = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Test2.dat"
-
-    for i, line in enumerate(read_dat_file_smart(file_path)):
-        print(f"Parsed line {i}:", line)
+    file_path = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Test.dat"
+    file_path_test = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Test.txt"
+    with open(file_path_test, 'w', encoding=Encode) as f:
+        for i, line in enumerate(read_dat_file_smart(file_path)):
+            f.write(f"Parsed line {i+1}: {line}\n")
