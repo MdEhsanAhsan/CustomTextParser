@@ -1,7 +1,3 @@
-Here's your updated **README.md** with badges and enhanced formatting:
-
----
-
 # 🧠 CustomTextParser  
 *A robust DAT file parser and converter with advanced features*
 
@@ -90,10 +86,3 @@ MIT License
 For large datasets, use `utf-16-sig` encoding to ensure proper BOM handling in Excel!
 
 ---
-
-### 🧪 Suggested Badges (Add Later)  
-- [ ] **Test Coverage**: Add a badge once unit tests are implemented.  
-- [ ] **Code Quality**: Integrate with tools like `pylint` or `black`.  
-- [ ] **Documentation**: Link to a ReadTheDocs page if needed.  
-
-Let me know if you'd like to refine any section! 🚀
