@@ -1,11 +1,14 @@
-Here's an updated **README.md** with emojis and enhanced documentation for your GitHub repo:
+Here's your updated **README.md** with badges and enhanced formatting:
 
 ---
 
 # 🧠 CustomTextParser  
 *A robust DAT file parser and converter with advanced features*
 
-[![License](https://github.com/MdEhsanAhsan/CustomTextParser/blob/main/LICENSE)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)  
+[![Python Version](https://img.shields.io/badge/python-3.x-blue)](https://www.python.org/)  
+[![GitHub Issues](https://img.shields.io/github/issues/MdEhsanAhsan/CustomTextParser)](https://github.com/MdEhsanAhsan/CustomTextParser/issues)  
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/MdEhsanAhsan/CustomTextParser/actions)
 
 A Python script to parse custom `.dat` files with quoted fields and special field separators, and export data to CSV/TSV formats. Handles edge cases like embedded newlines, encoding detection, and Excel compatibility warnings.
 
@@ -88,4 +91,9 @@ For large datasets, use `utf-16-sig` encoding to ensure proper BOM handling in E
 
 ---
 
-Let me know if you'd like to add badges for Python version, license, or build status! 🚀
+### 🧪 Suggested Badges (Add Later)  
+- [ ] **Test Coverage**: Add a badge once unit tests are implemented.  
+- [ ] **Code Quality**: Integrate with tools like `pylint` or `black`.  
+- [ ] **Documentation**: Link to a ReadTheDocs page if needed.  
+
+Let me know if you'd like to refine any section! 🚀
