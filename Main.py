@@ -109,15 +109,11 @@ def detect_encoding(file_path, fname):
 
                         char_latin = bytes([b]).decode('latin-1',errors='replace')
 
-                        
-
                         #Check category
 
                         cat_win = category(char_win)
 
                         cat_latin = category(char_latin)
-
-                        
 
                         #Printable in Windows-1252 but Control Number in Latin-1
 
@@ -126,8 +122,6 @@ def detect_encoding(file_path, fname):
                             print(f"{fname} is detected as Windows-1252")
 
                             return 'Windows-1252'
-
-                
 
                 # No definitive Windows-1252 charater found
 
@@ -147,12 +141,12 @@ def detect_encoding(file_path, fname):
 
         return 'No File'
 
-def read_dat_file_smart(file_path):
+def read_dat_file_smart(file_path, encoding):
     """
     Reads a DAT file smartly, ignoring newlines that occur inside quoted fields.
     Yields complete logical lines.
     """
-    with open(file_path, 'r', encoding=Encode) as f:
+    with open(file_path, 'r', encoding=encoding) as f:
         reader = CharReader(f)
         buffer = ''
         in_quote = False  # Track whether we are inside a quoted field
@@ -162,11 +156,10 @@ def read_dat_file_smart(file_path):
             peeked = reader.peek_two()
             next_chars = "".join(c if c is not None else "" for c in peeked)
             if not char:
-                # End of file
                 if buffer:
                     yield buffer.strip('\r\n')
                 break
-            #Start of Lines
+
             if char == QUOTE_CHAR and not in_quote:
                 in_quote = True
                 buffer += char
@@ -174,7 +167,6 @@ def read_dat_file_smart(file_path):
                 in_quote = False
                 buffer += char
             elif (char == '\n' or char == '\r') and not in_quote and next_chars != FIELD_SEP + QUOTE_CHAR:
-                # End of a logical line, yield the buffer
                 yield buffer.strip('\r\n')
                 buffer = ''
             else:
@@ -201,46 +193,135 @@ def parse_line(line, headers):
     row = {header: value for header, value in zip(headers, values)}
     return row
 
-if __name__ == '__main__':
-    input_file_path = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Test.dat"
+def export_to_tsv(input_file_path,Encode):
+    """Parse DAT and export as TSV (UTF-16), warn for long fields."""
+
     if Encode is None:
         Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
         if Encode == 'Error' or Encode == 'No File':
             print(f"Error detecting encoding of file: {input_file_path}")
             exit(1)
 
-    # Generate output path by replacing .dat with .csv
     base, _ = os.path.splitext(input_file_path)
     output_csv_path = base + ".csv"
 
-    parsed_rows = []  # Collect all parsed rows here
+    parsed_rows = []
+    headers = []
     for i, line in enumerate(read_dat_file_smart(input_file_path)):
         if i == 0:
             headers = line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)
             headers = [strip_one_quote(header) for header in headers]
-            continue  # Skip header line
+            continue
         parsed = parse_line(line, headers)
         if parsed is None:
             print(f"Skipping malformed row at line {i+1}: {line}")
             continue
-        parsed_rows.append(parsed)  # Add this line to the output
+        parsed_rows.append(parsed)
 
     MAX_EXCEL_CELL_LENGTH = 32_767
-
-    # Warn if any field value exceeds Excel's cell limit
-    for row_num, row in enumerate(parsed_rows, start=2):  # start=2 to account for header
+    for row_num, row in enumerate(parsed_rows, start=2):
         for field, value in row.items():
             if len(value) > MAX_EXCEL_CELL_LENGTH:
-                print(f"Warning: Field '{field}' in row {row_num} exceeds Excel's cell limit ({MAX_EXCEL_CELL_LENGTH} chars). It may not display correctly in Excel.")
+                print(
+                    f"Warning: Field '{field}' in row {row_num} exceeds Excel's cell limit of "
+                    f"{MAX_EXCEL_CELL_LENGTH} chars (actual length: {len(value)}). "
+                    "It may not display correctly in Excel."
+                )
 
-    # Exporting to TSV (Tab-Separated Values) with all fields quoted
     with open(output_csv_path, 'w', newline='', encoding='utf-16') as csvfile:
         writer = csv.DictWriter(
             csvfile,
             fieldnames=headers,
-            delimiter='\t',              # Use TAB as delimiter
-            quoting=csv.QUOTE_ALL        # Quote all fields
+            delimiter='\t',
+            quoting=csv.QUOTE_ALL
         )
         writer.writeheader()
         writer.writerows(parsed_rows)
     print(f"Exported {len(parsed_rows)} rows to {output_csv_path}")
+
+def compare_dat_files(file1_path, file2_path, mapping_file=None, output_diff_path="value_diff.tsv"):
+    global Encode
+
+    # Detect encodings for both files
+    encode1 = detect_encoding(file1_path, os.path.basename(file1_path))
+    encode2 = detect_encoding(file2_path, os.path.basename(file2_path))
+
+    if encode1 in ('Error', 'No File') or encode2 in ('Error', 'No File'):
+        print("Failed to detect encoding for one or both files.")
+        return
+
+    # Read lines from both files
+    def get_headers_and_rows(file_path, encoding):
+        headers = []
+        rows = []
+        for i, line in enumerate(read_dat_file_smart(file_path, encoding)):
+            if i == 0:
+                headers = [strip_one_quote(h) for h in line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+            else:
+                parsed = parse_line(line, headers)
+                if parsed:
+                    rows.append(parsed)
+        return headers, rows
+
+    headers1, rows1 = get_headers_and_rows(file1_path, encode1)
+    headers2, rows2 = get_headers_and_rows(file2_path, encode2)
+
+    # Load mapping if provided
+    if mapping_file:
+        header_map = {}
+        with open(mapping_file, encoding='utf-8') as f:
+            for line in f:
+                if ',' in line:
+                    a, b = line.strip().split(',', 1)
+                    header_map[a] = b
+        headers_common = [h for h in headers1 if h in header_map]
+        mapped_headers1 = headers_common
+        mapped_headers2 = [header_map[h] for h in headers_common]
+    else:
+        if headers1 != headers2:
+            print("Headers do not match and no mapping file provided.")
+            return
+        mapped_headers1 = headers1
+        mapped_headers2 = headers2
+
+    # Export result
+    File1_Value = os.path.basename(file1_path)
+    File2_Value = os.path.basename(file2_path)
+
+    # Compare values
+    diffs = []
+    row_count = min(len(rows1), len(rows2))
+    for idx in range(row_count):
+        r1 = rows1[idx]
+        r2 = rows2[idx]
+        for h1, h2 in zip(mapped_headers1, mapped_headers2):
+            v1 = r1.get(h1, "")
+            v2 = r2.get(h2, "")
+            if v1 != v2:
+                diffs.append({
+                    "Row": idx + 2,
+                    "Field": h1 if h1 == h2 else f"{h1} ↔ {h2}",
+                    File1_Value: v1,
+                    File2_Value: v2
+                })
+
+    if not diffs:
+        print("No differences found.")
+        return
+
+    fieldnames = ["Row", "Field", File1_Value, File2_Value]
+    with open(output_diff_path, 'w', encoding='utf-8-SIG', newline='') as out:
+        writer = csv.DictWriter(out, fieldnames=fieldnames, delimiter=',', quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        writer.writerows(diffs)
+
+    print(f"Exported {len(diffs)} differences to {output_diff_path}")
+
+
+if __name__ == '__main__':
+    input_file_path = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Test.dat"
+    input_file_path2 = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Test3.dat"
+    mapping_file = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Mapped.csv"
+    # Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
+    # export_to_tsv(input_file_path,Encode)
+    compare_dat_files(input_file_path, input_file_path2, mapping_file=mapping_file, output_diff_path=r"C:\Users\ehsan\OneDrive\Desktop\DAT\value_diff.csv")
