@@ -1,58 +1,91 @@
-# CustomTextParser
+Here's an updated **README.md** with emojis and enhanced documentation for your GitHub repo:
 
-A Python script to robustly parse custom `.dat` files with quoted fields and special field separators, and export the data to a `.csv` file. The script automatically detects file encoding, handles malformed rows, and warns about Excel cell size limits.
+---
 
-## Features
+# 🧠 CustomTextParser  
+*A robust DAT file parser and converter with advanced features*
 
-- **Automatic Encoding Detection:** Detects UTF-8, UTF-16, Windows-1252, and Latin-1 encodings.
-- **Custom Field Parsing:** Handles fields enclosed in a custom quote character (`þ`, `\xfe`) and separated by a custom separator (DC4, `\x14`).
-- **Smart Line Reading:** Correctly reads logical lines, even if newlines appear inside quoted fields.
-- **Header Extraction:** Uses the first line as headers.
-- **Row Validation:** Skips rows where the number of fields does not match the header count.
-- **Excel Compatibility Warning:** Warns if any field exceeds Excel’s cell limit (32,767 characters).
-- **Automatic Output Path:** Exports to a `.csv` file with the same name as the input `.dat` file.
-- **TSV Output:** Exports as tab-separated values with all fields quoted, using UTF-16 encoding for maximum compatibility.
+[![License](https://github.com/MdEhsanAhsan/CustomTextParser/blob/main/LICENSE)](LICENSE)
 
-## Usage
+A Python script to parse custom `.dat` files with quoted fields and special field separators, and export data to CSV/TSV formats. Handles edge cases like embedded newlines, encoding detection, and Excel compatibility warnings.
 
-1. **Place your `.dat` file** in a known location.
-2. **Edit the script** to set the `input_file_path` variable to your file’s path.
-3. **Run the script:**
-   ```sh
-   python Main.py
-   ```
-4. **Output:**  
-   - The script will create a `.csv` file in the same directory as your input file.
-   - Any malformed rows (field count mismatch) will be skipped and reported in the console.
-   - Warnings will be printed if any field exceeds Excel’s cell size limit.
+---
 
-## Example
+## 🌟 Features  
+- 📦 **Automatic Encoding Detection**: Supports UTF-8, UTF-16 (LE/BE), Windows-1252, and Latin-1.  
+- 🔍 **Custom Field Parsing**: Handles fields enclosed in `þ` (FE hex) and separated by DC4 (`\x14`).  
+- 🔁 **Smart Line Reader**: Correctly parses logical lines even with newlines inside quoted fields.  
+- 📊 **Header Management**: Extracts headers from the first line or allows header replacement via mapping.  
+- 🧮 **Row Validation**: Skips malformed rows with field count mismatches.  
+- 📈 **Excel Compatibility**: Warns if fields exceed Excel's 32,767 character limit.  
+- 📄 **Flexible Output**: Exports to UTF-16 TSV with all fields quoted for maximum compatibility.  
+- 🔄 **File Comparison**: Compares two DAT files row-by-row with optional header mapping.  
+- ✏️ **Header Replacement**: Renames headers using a CSV mapping file.  
 
-Suppose your input file is:
+---
+
+## 🔍 Usage  
+### 🛠️ CLI Commands  
+```bash
+# Convert DAT to TSV/CSV
+python Main.py input.dat --csv [output.tsv]
+
+# Compare two DAT files
+python Main.py file1.dat file2.dat --compare
+
+# Compare with header mapping
+python Main.py file1.dat file2.dat --compare -m header_map.csv
+
+# Replace headers in DAT file
+python Main.py input.dat --replace-header header_map.csv --replace-output output.dat
+```
+
+### 🧪 Example  
+**Input (`input.dat`)**:
 ```
 þFIRSTBATESþþLASTBATESþ
 þ123þþDOEþ
 þ124þþSMITHþ
 ```
 
-The script will produce `Test.csv` (tab-separated, all fields quoted) in the same folder.
-
-## Notes
-
-- The script expects fields to be enclosed in `þ` and separated by the DC4 character.
-- Only rows matching the header field count are exported.
-- Output is encoded as UTF-16 for best compatibility with Excel and special characters.
-
-## Requirements
-
-- Python 3.x
-
-## Customization
-
-- To change the input file, modify the `input_file_path` variable at the top of the script.
-- To change the output format or encoding, edit the file writing section at the end of the script.
+**Output (`input.csv`)**:
+```tsv
+"FIRSTBATES"	"LASTBATES"
+"123"	"DOE"
+"124"	"SMITH"
+```
 
 ---
 
-**Author:**  
-Md Ehsan Ahsan
+## 📝 Notes  
+- **Encoding**: Output files use UTF-16 for Excel compatibility.  
+- **Field Format**: Assumes fields are enclosed in `þ` and separated by DC4 (`\x14`).  
+- **Validation**: Only rows matching the header field count are exported.  
+
+---
+
+## 📋 Requirements  
+- 🐍 Python 3.x  
+- 🔌 No external dependencies (uses built-in modules: `csv`, `argparse`, `unicodedata`)  
+
+---
+
+## 🎨 Customization  
+- Modify `QUOTE_CHAR` (`\xfe`) and `FIELD_SEP` (`\x14`) in `Main.py` for custom formats.  
+- Adjust output format (e.g., delimiter, encoding) in the `export_to_tsv()` function.  
+
+---
+
+## 👤 Author  
+**Md Ehsan Ahsan**  
+[GitHub Profile](https://github.com/MdEhsanAhsan)  
+MIT License  
+
+---
+
+### 📌 Tip  
+For large datasets, use `utf-16-sig` encoding to ensure proper BOM handling in Excel!
+
+---
+
+Let me know if you'd like to add badges for Python version, license, or build status! 🚀

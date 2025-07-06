@@ -1,7 +1,7 @@
 from unicodedata import category
 import os
 import csv
-
+import argparse
 class CharReader:
     def __init__(self, file):
         self.file = file
@@ -193,21 +193,21 @@ def parse_line(line, headers):
     row = {header: value for header, value in zip(headers, values)}
     return row
 
-def export_to_tsv(input_file_path,Encode):
+def export_to_tsv(input_file_path,Encode, output_csv_path=None):
     """Parse DAT and export as TSV (UTF-16), warn for long fields."""
-
     if Encode is None:
         Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
         if Encode == 'Error' or Encode == 'No File':
             print(f"Error detecting encoding of file: {input_file_path}")
             exit(1)
 
-    base, _ = os.path.splitext(input_file_path)
-    output_csv_path = base + ".csv"
+    if output_csv_path is None:
+        base, _ = os.path.splitext(input_file_path)
+        output_csv_path = base + ".csv"
 
     parsed_rows = []
     headers = []
-    for i, line in enumerate(read_dat_file_smart(input_file_path)):
+    for i, line in enumerate(read_dat_file_smart(input_file_path, Encode)):
         if i == 0:
             headers = line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)
             headers = [strip_one_quote(header) for header in headers]
@@ -269,7 +269,7 @@ def compare_dat_files(file1_path, file2_path, mapping_file=None, output_diff_pat
     # Load mapping if provided
     if mapping_file:
         header_map = {}
-        with open(mapping_file, encoding='utf-8') as f:
+        with open(mapping_file, encoding=detect_encoding(mapping_file, os.path.basename(mapping_file))) as f:
             for line in f:
                 if ',' in line:
                     a, b = line.strip().split(',', 1)
@@ -317,11 +317,107 @@ def compare_dat_files(file1_path, file2_path, mapping_file=None, output_diff_pat
 
     print(f"Exported {len(diffs)} differences to {output_diff_path}")
 
+def replace_header_and_export_dat(input_file_path, output_file_path, header_map, encoding):
+    """
+    Reads a DAT file, replaces headers using header_map, and writes to a new DAT file.
+    No escaping is done; fields are written as-is.
+    """
+    with open(input_file_path, 'r', encoding=encoding) as infile, \
+         open(output_file_path, 'w', encoding=encoding, newline='') as outfile:
+        for i, line in enumerate(infile):
+            if i == 0:
+                # Replace headers
+                headers = line.strip('\r\n').split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)
+                headers = [strip_one_quote(h) for h in headers]
+                new_headers = [header_map.get(h, h) for h in headers]
+                # Reconstruct the header line in DAT format
+                header_line = (QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR).join(new_headers)
+                header_line = f"{QUOTE_CHAR}{header_line}{QUOTE_CHAR}"
+                outfile.write(header_line + '\n')
+            else:
+                # Write the rest of the lines as-is
+                outfile.write(line)
+    print(f"Exported DAT file with replaced headers to {output_file_path}")
+
+# Get command-line arguments
+# This function uses argparse to handle command-line arguments for the script.
+def get_arguments():
+    parser = argparse.ArgumentParser(description="File converter utility")
+    parser.add_argument("input_file", help="Path to first input DAT file")
+    parser.add_argument("input_file2", nargs="?", help="Path to second input DAT file (for compare)")
+    parser.add_argument(
+        "--csv",
+        nargs="?",
+        const=True,
+        metavar="OUTPUT",
+        help="Convert input to CSV. Optionally specify output file path."
+    )
+    parser.add_argument(
+        "-c", "--compare",
+        action="store_true",
+        help="Compare two DAT files"
+    )
+    parser.add_argument(
+        "-m", "--mapping",
+        metavar="MAPPING_FILE",
+        help="Optional mapping file for header mapping when comparing"
+    )
+    parser.add_argument(
+        "-r", "--replace-header",
+        metavar="HEADER_MAPPING_FILE",
+        help="Replace headers of input file using a mapping file and export as DAT"
+    )
+    parser.add_argument(
+        "--replace-output",
+        metavar="OUTPUT_DAT",
+        help="Output DAT file path for header replacement (optional, default: input_MOD.dat)"
+    )
+    return parser.parse_args()
 
 if __name__ == '__main__':
-    input_file_path = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Test.dat"
-    input_file_path2 = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Test3.dat"
-    mapping_file = r"C:\Users\ehsan\OneDrive\Desktop\DAT\Mapped.csv"
-    # Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
-    # export_to_tsv(input_file_path,Encode)
-    compare_dat_files(input_file_path, input_file_path2, mapping_file=mapping_file, output_diff_path=r"C:\Users\ehsan\OneDrive\Desktop\DAT\value_diff.csv")
+    args = get_arguments()
+    input_file_path = args.input_file
+
+    if args.csv:
+        print(f"Converting {input_file_path} to CSV...")
+        Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
+        if args.csv is True:
+            base, _ = os.path.splitext(input_file_path)
+            output_csv_path = base + ".csv"
+        else:
+            output_csv_path = args.csv
+        export_to_tsv(input_file_path, Encode, output_csv_path)
+
+    elif args.compare:
+        if not args.input_file2:
+            print("Error: You must provide a second DAT file for comparison.")
+        else:
+            compare_dat_files(
+                args.input_file,
+                args.input_file2,
+                mapping_file=args.mapping,
+                output_diff_path="value_diff.csv"
+            )
+
+    elif args.replace_header:
+        # Determine output path
+        if args.replace_output:
+            output_dat_path = args.replace_output
+        else:
+            base, ext = os.path.splitext(input_file_path)
+            output_dat_path = f"{base}_MOD{ext}"
+
+        # Load header mapping from file
+        header_map = {}
+        with open(args.replace_header, encoding=detect_encoding(args.replace_header, os.path.basename(args.replace_header))) as f:
+            for line in f:
+                if ',' in line:
+                    old, new = line.strip().split(',', 1)
+                    header_map[old] = new
+        Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
+        replace_header_and_export_dat(
+            input_file_path,
+            output_dat_path,
+            header_map,
+            Encode
+        )
