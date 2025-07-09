@@ -2,6 +2,7 @@ from unicodedata import category
 import os
 import csv
 import argparse
+
 class CharReader:
     def __init__(self, file):
         self.file = file
@@ -42,9 +43,9 @@ class CharReader:
 QUOTE_CHAR = '\xfe' # Quote character used to enclose fields.
 FIELD_SEP = '\x14' # Data Control 4 (DC4) character, used as field separator.
 Encode = None  # Global variable to hold the detected encoding
+EXPORT_ENCODING = 'utf-16' # Default export encoding
 
 def detect_encoding(file_path, fname):
-
     """
 
     Detects the file encoding by reading a larger sample (4KB) and applying several heuristics.
@@ -193,53 +194,75 @@ def parse_line(line, headers):
     row = {header: value for header, value in zip(headers, values)}
     return row
 
-def export_to_tsv(input_file_path,Encode, output_csv_path=None):
-    """Parse DAT and export as TSV (UTF-16), warn for long fields."""
-    if Encode is None:
-        Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
-        if Encode == 'Error' or Encode == 'No File':
-            print(f"Error detecting encoding of file: {input_file_path}")
-            exit(1)
 
-    if output_csv_path is None:
-        base, _ = os.path.splitext(input_file_path)
-        output_csv_path = base + ".csv"
+def excel_warning(headers, rows, warn_limit=32767):
+    """
+    Warns if any field value exceeds Excel's 32,767 character cell limit.
+    """
+    for row_idx, row in enumerate(rows, 2):
+        for h in headers:
+            val = str(row.get(h, ""))
+            if len(val) > warn_limit:
+                print(f"❗Warning: Value in row {row_idx}, column '{h}' exceeds Excel's 32,767 character cell limit ({len(val)} chars)❗")
+                print(f"❗Excel won't display correctly! Consider truncating or splitting this value.❗")
 
-    parsed_rows = []
-    headers = []
-    for i, line in enumerate(read_dat_file_smart(input_file_path, Encode)):
-        if i == 0:
-            headers = line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)
-            headers = [strip_one_quote(header) for header in headers]
-            continue
-        parsed = parse_line(line, headers)
-        if parsed is None:
-            print(f"Skipping malformed row at line {i+1}: {line}")
-            continue
-        parsed_rows.append(parsed)
-
-    MAX_EXCEL_CELL_LENGTH = 32_767
-    for row_num, row in enumerate(parsed_rows, start=2):
-        for field, value in row.items():
-            if len(value) > MAX_EXCEL_CELL_LENGTH:
-                print(
-                    f"Warning: Field '{field}' in row {row_num} exceeds Excel's cell limit of "
-                    f"{MAX_EXCEL_CELL_LENGTH} chars (actual length: {len(value)}). "
-                    "It may not display correctly in Excel."
-                )
-
-    with open(output_csv_path, 'w', newline='', encoding='utf-16') as csvfile:
+def export_to_tsv(headers, rows, output_path, encoding=EXPORT_ENCODING):
+    excel_warning(headers, rows)
+    with open(output_path, 'w', newline='', encoding=encoding) as tsvfile:
         writer = csv.DictWriter(
-            csvfile,
+            tsvfile,
             fieldnames=headers,
             delimiter='\t',
             quoting=csv.QUOTE_ALL
         )
+        # Convert all values to strings before writing
         writer.writeheader()
-        writer.writerows(parsed_rows)
-    print(f"Exported {len(parsed_rows)} rows to {output_csv_path}")
+        writer.writerows([{h: str(row.get(h, "")) for h in headers} for row in rows])
+    print(f"Exported {len(rows)} rows to {output_path}")
 
-def compare_dat_files(file1_path, file2_path, mapping_file=None, output_diff_path="value_diff.tsv"):
+def export_to_csv(headers, rows, output_path, encoding=EXPORT_ENCODING):
+    excel_warning(headers, rows)
+    with open(output_path, 'w', newline='', encoding=encoding) as csvfile:
+        writer = csv.DictWriter(
+            csvfile,
+            fieldnames=headers,
+            delimiter=',',
+            quoting=csv.QUOTE_ALL
+        )
+        # Convert all values to strings before writing
+        writer.writeheader()
+        writer.writerows([{h: str(row.get(h, "")) for h in headers} for row in rows])
+    print(f"Exported {len(rows)} rows to {output_path}")
+
+def export_to_dat(headers, rows, output_path, encoding=EXPORT_ENCODING):
+    sep = QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR
+    with open(output_path, 'w', encoding=encoding, newline='') as f:
+        header_line = sep.join(headers)
+        f.write(f"{QUOTE_CHAR}{header_line}{QUOTE_CHAR}\r\n")
+        for row in rows:
+            # Ensure all fields are strings
+            fields = [str(row.get(h, '')) for h in headers]
+            line = sep.join(fields)
+            f.write(f"{QUOTE_CHAR}{line}{QUOTE_CHAR}\r\n")
+    print(f"Exported {len(rows)} rows to {output_path}")
+
+def get_headers(file_path, encoding):
+    with open(file_path, 'r', encoding=encoding) as f:
+        header_line = f.readline().strip('\r\n')
+        headers = [strip_one_quote(h) for h in header_line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+        return headers
+
+def file_has_valid_rows(file_path, headers, encoding):
+    for i, line in enumerate(read_dat_file_smart(file_path, encoding)):
+        if i == 0:
+            continue
+        values = line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)
+        values = [strip_one_quote(value) for value in values]
+        if len(values) != len(headers):
+            return False
+    return True
+
+def compare_dat_files(file1_path, file2_path, MAP=None):
     global Encode
 
     # Detect encodings for both files
@@ -248,7 +271,7 @@ def compare_dat_files(file1_path, file2_path, mapping_file=None, output_diff_pat
 
     if encode1 in ('Error', 'No File') or encode2 in ('Error', 'No File'):
         print("Failed to detect encoding for one or both files.")
-        return
+        return None, None  # Return None for headers and diffs
 
     # Read lines from both files
     def get_headers_and_rows(file_path, encoding):
@@ -266,29 +289,33 @@ def compare_dat_files(file1_path, file2_path, mapping_file=None, output_diff_pat
     headers1, rows1 = get_headers_and_rows(file1_path, encode1)
     headers2, rows2 = get_headers_and_rows(file2_path, encode2)
 
-    # Load mapping if provided
-    if mapping_file:
-        header_map = {}
-        with open(mapping_file, encoding=detect_encoding(mapping_file, os.path.basename(mapping_file))) as f:
-            for line in f:
-                if ',' in line:
-                    a, b = line.strip().split(',', 1)
-                    header_map[a] = b
-        headers_common = [h for h in headers1 if h in header_map]
-        mapped_headers1 = headers_common
-        mapped_headers2 = [header_map[h] for h in headers_common]
+    # Mapping logic
+    if MAP:
+        # MAP is expected to be {header_from_file1: header_from_file2}
+        valid_mapped_headers = [
+            (h1, h2) for h1, h2 in MAP.items()
+            if h1 in headers1 and h2 in headers2
+        ]
+
+        if not valid_mapped_headers:
+            print("No valid header mappings found — check your mapping file and headers.")
+            return None, None
+
+        # Split into two aligned lists
+        mapped_headers1, mapped_headers2 = zip(*valid_mapped_headers)
     else:
+        # If no mapping provided, require exact header match
         if headers1 != headers2:
             print("Headers do not match and no mapping file provided.")
-            return
+            return None, None
         mapped_headers1 = headers1
         mapped_headers2 = headers2
 
-    # Export result
+    # Prepare filenames
     File1_Value = os.path.basename(file1_path)
     File2_Value = os.path.basename(file2_path)
 
-    # Compare values
+    # Compare row values
     diffs = []
     row_count = min(len(rows1), len(rows2))
     for idx in range(row_count):
@@ -299,7 +326,7 @@ def compare_dat_files(file1_path, file2_path, mapping_file=None, output_diff_pat
             v2 = r2.get(h2, "")
             if v1 != v2:
                 diffs.append({
-                    "Row": idx + 2,
+                    "Row": idx + 2,  # +2 accounts for header and 1-based indexing
                     "Field": h1 if h1 == h2 else f"{h1} ↔ {h2}",
                     File1_Value: v1,
                     File2_Value: v2
@@ -307,21 +334,13 @@ def compare_dat_files(file1_path, file2_path, mapping_file=None, output_diff_pat
 
     if not diffs:
         print("No differences found.")
-        return
+        return None, None
 
     fieldnames = ["Row", "Field", File1_Value, File2_Value]
-    with open(output_diff_path, 'w', encoding='utf-8-SIG', newline='') as out:
-        writer = csv.DictWriter(out, fieldnames=fieldnames, delimiter=',', quoting=csv.QUOTE_ALL)
-        writer.writeheader()
-        writer.writerows(diffs)
+    return fieldnames, diffs
 
-    print(f"Exported {len(diffs)} differences to {output_diff_path}")
 
 def replace_header_and_export_dat(input_file_path, output_file_path, header_map, encoding):
-    """
-    Reads a DAT file, replaces headers using header_map, and writes to a new DAT file.
-    No escaping is done; fields are written as-is.
-    """
     with open(input_file_path, 'r', encoding=encoding) as infile, \
          open(output_file_path, 'w', encoding=encoding, newline='') as outfile:
         for i, line in enumerate(infile):
@@ -335,22 +354,76 @@ def replace_header_and_export_dat(input_file_path, output_file_path, header_map,
                 header_line = f"{QUOTE_CHAR}{header_line}{QUOTE_CHAR}"
                 outfile.write(header_line + '\n')
             else:
-                # Write the rest of the lines as-is
                 outfile.write(line)
     print(f"Exported DAT file with replaced headers to {output_file_path}")
+
+def replace_header_and_collect(input_file_path, header_map, encoding):
+    """
+    Reads a DAT file, replaces headers using header_map, and returns new headers and rows.
+    """
+    with open(input_file_path, 'r', encoding=encoding) as infile:
+        for i, line in enumerate(infile):
+            if i == 0:
+                headers = line.strip('\r\n').split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)
+                headers = [strip_one_quote(h) for h in headers]
+                new_headers = [header_map.get(h, h) for h in headers]
+                rows = []
+            else:
+                values = line.strip('\r\n').split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)
+                values = [strip_one_quote(v) for v in values]
+                if len(values) == len(new_headers):
+                    rows.append(dict(zip(new_headers, values)))
+        return new_headers, rows
+
+def load_mapping_file(mapping_file):
+    """
+    Loads a header mapping file and returns a dictionary mapping old headers to new headers.
+    """
+    header_map = {}
+    with open(mapping_file, encoding=detect_encoding(mapping_file, os.path.basename(mapping_file))) as f:
+        for line in f:
+            if ',' in line:
+                old, new = line.strip().split(',', 1)
+                header_map[old] = new
+    return header_map
 
 # Get command-line arguments
 # This function uses argparse to handle command-line arguments for the script.
 def get_arguments():
-    parser = argparse.ArgumentParser(description="File converter utility")
-    parser.add_argument("input_file", help="Path to first input DAT file")
+    parser = argparse.ArgumentParser(
+        description="File converter utility",
+        usage=(
+            "\n  %(prog)s input_file [input_file2] [options]\n\n"
+            "Examples:\n"
+            "  %(prog)s myfile.dat --csv\n"
+            "  %(prog)s file1.dat file2.dat -c\n"
+            "  %(prog)s --help\n"
+        ),
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    # Make input_file optional by adding nargs='?'
+    parser.add_argument("input_file", nargs='?', help="Path to first input DAT file")
     parser.add_argument("input_file2", nargs="?", help="Path to second input DAT file (for compare)")
     parser.add_argument(
         "--csv",
         nargs="?",
         const=True,
         metavar="OUTPUT",
-        help="Convert input to CSV. Optionally specify output file path."
+        help="Convert input to CSV (Comma Separated Values). Optionally specify output file path."
+    )
+    parser.add_argument(
+        "--tsv",
+        nargs="?",
+        const=True,
+        metavar="OUTPUT",
+        help="Export output as CSV (Tab Separated Values). Optionally specify output file path."
+    )
+    parser.add_argument(
+        "--dat",
+        nargs="?",
+        const=True,
+        metavar="OUTPUT",
+        help="Export output as DAT. Optionally specify output file path."
     )
     parser.add_argument(
         "-c", "--compare",
@@ -367,37 +440,64 @@ def get_arguments():
         metavar="HEADER_MAPPING_FILE",
         help="Replace headers of input file using a mapping file and export as DAT"
     )
-    parser.add_argument(
-        "--replace-output",
-        metavar="OUTPUT_DAT",
-        help="Output DAT file path for header replacement (optional, default: input_MOD.dat)"
-    )
-    return parser.parse_args()
+    try:
+        return parser.parse_args()
+    except SystemExit:
+        print("\n" + "="*60)
+        print("  ❌  Missing required arguments!\n")
+        print("  Please provide at least the input_file.\n")
+        print("  For help, run:\n  python Main.py --help\n")
+        print("="*60 + "\n")
+        exit(2)
 
 if __name__ == '__main__':
+    # input_file_path = r"F:\Programming\_testFiles\Python\Test2.dat"
+    # input_file2_path = r"F:\Programming\_testFiles\Python\Test3.dat"
+    # mapping_file_path = r"F:\Programming\_testFiles\Python\Mapped.csv"
+    # output_file_path = r"F:\Programming\_testFiles\Python\Compare.csv"
+    # map_dic = load_mapping_file(mapping_file_path) if mapping_file_path else None
+    # header, diffs = compare_dat_files(input_file_path, input_file2_path, map_dic)
+    # export_to_tsv(header, diffs, output_file_path, encoding='utf-16')
+
+
     args = get_arguments()
+    if not args.input_file:
+        print("\n" + "="*60)
+        print("  ❌  Missing required arguments!\n")
+        print("  For help, run:\n  python Main.py --help\n")
+        print("="*60 + "\n")
+        exit(2)
+
     input_file_path = args.input_file
 
-    if args.csv:
-        print(f"Converting {input_file_path} to CSV...")
-        Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
-        if args.csv is True:
-            base, _ = os.path.splitext(input_file_path)
-            output_csv_path = base + ".csv"
-        else:
-            output_csv_path = args.csv
-        export_to_tsv(input_file_path, Encode, output_csv_path)
-
-    elif args.compare:
+    if args.compare:
         if not args.input_file2:
             print("Error: You must provide a second DAT file for comparison.")
         else:
-            compare_dat_files(
+            if args.mapping:
+                map_dic = load_mapping_file(args.mapping)
+            else:
+                map_dic = None
+            headers, diffs = compare_dat_files(
                 args.input_file,
                 args.input_file2,
-                mapping_file=args.mapping,
-                output_diff_path="value_diff.csv"
+                MAP=map_dic
             )
+            if diffs: # Only export if there are differences
+                if args.tsv:
+                    output_path = args.tsv if args.tsv is not True else "value_diff.csv"
+                    export_to_tsv(headers, diffs, output_path)
+                elif args.csv:
+                    output_path = args.csv if args.csv is not True else "value_diff.csv"
+                    export_to_csv(headers, diffs, output_path, encoding='utf-8-sig')
+                elif getattr(args, "dat", False):
+                    output_path = args.dat if args.dat is not True else "value_diff.dat"
+                    export_to_dat(headers, diffs, output_path)
+                else:
+                    print("No export format specified for comparison, defaulting to DAT.")
+                    export_to_dat(headers, diffs, "value_diff.dat")
+            else:
+                print("No differences found during comparison.")
 
     elif args.replace_header:
         # Determine output path
@@ -405,20 +505,60 @@ if __name__ == '__main__':
             output_dat_path = args.replace_output
         else:
             base, ext = os.path.splitext(input_file_path)
-            output_dat_path = f"{base}_MOD{ext}"
+            output_dat_path = f"{base}_Replaced{ext}"
 
-        # Load header mapping from file
-        header_map = {}
-        with open(args.replace_header, encoding=detect_encoding(args.replace_header, os.path.basename(args.replace_header))) as f:
-            for line in f:
-                if ',' in line:
-                    old, new = line.strip().split(',', 1)
-                    header_map[old] = new
+        # Load header mapping from file using the dedicated function
+        header_map = load_mapping_file(args.replace_header)
+
+        # Detect input encoding
         Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
-        replace_header_and_export_dat(
-            input_file_path,
-            output_dat_path,
-            header_map,
-            Encode
-        )
-        
+
+        headers, rows = replace_header_and_collect(input_file_path, header_map, Encode)
+        if args.tsv:
+            output_path = args.tsv if args.tsv is not True else output_dat_path.replace('.dat', '.csv')
+            export_to_tsv(headers, rows, output_path,encoding=Encode)
+        elif args.csv:
+            output_path = args.csv if args.csv is not True else output_dat_path.replace('.dat', '.csv')
+            export_to_csv(headers, rows, output_path, encoding=Encode)
+        elif getattr(args, "dat", False):
+            output_path = args.dat if args.dat is not True else output_dat_path
+            export_to_dat(headers, rows, output_path, encoding=Encode)
+        else:
+            print("No export format specified for header replacement, defaulting to DAT.")
+            export_to_dat(headers, rows, output_dat_path, encoding=Encode)
+
+    elif args.tsv: # General TSV conversion (if no other specific operation is requested)
+        print(f"Converting {input_file_path} to CSV (Tab Separated Values)...")
+        Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
+        if args.tsv is True:
+            base, _ = os.path.splitext(input_file_path)
+            output_tsv_path = base + ".csv"
+        else:
+            output_tsv_path = args.tsv
+        headers, rows = replace_header_and_collect(input_file_path, {}, Encode)
+        export_to_tsv(headers, rows, output_tsv_path)
+
+    elif args.csv: # General CSV conversion
+        print(f"Converting {input_file_path} to CSV (Comma Separated Values)...")
+        Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
+        if args.csv is True:
+            base, _ = os.path.splitext(input_file_path)
+            output_csv_path = base + ".csv"
+        else:
+            output_csv_path = args.csv
+        headers, rows = replace_header_and_collect(input_file_path, {}, Encode)
+        export_to_csv(headers, rows, output_csv_path)
+
+    elif args.dat: # General DAT conversion
+        print(f"Converting {input_file_path} to DAT...")
+        Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
+        if args.dat is True:
+            base, _ = os.path.splitext(input_file_path)
+            output_dat_path = base + "_converted.dat" # Or just .dat
+        else:
+            output_dat_path = args.dat
+        headers, rows = replace_header_and_collect(input_file_path, {}, Encode)
+        export_to_dat(headers, rows, output_dat_path)
+
+    else:
+        print("No operation specified. Use --help for usage.")
