@@ -1,99 +1,155 @@
-# 🧠 CustomTextParser
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.x-blue)](https://www.python.org/)
-[![Issues](https://img.shields.io/github/issues/MdEhsanAhsan/CustomTextParser)](https://github.com/MdEhsanAhsan/CustomTextParser/issues)
-[![Build](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/MdEhsanAhsan/CustomTextParser)
+# 📂 CustomTextParser
 
-A robust DAT file parser and converter with advanced features for handling complex text formats, encoding detection, and multi-file operations.
+A powerful Python CLI tool for reading, comparing, cleaning, and exporting `.dat` files with custom delimiters (`þ` + control chars). Designed to handle Excel-incompatible files, embedded line breaks, and encoding challenges with ease.
 
 ---
 
-## 🌟 Features
+## ✨ Features
 
-- **📦 Automatic Encoding Detection**  
-  Supports UTF-8, UTF-16 (LE/BE), Windows-1252, and Latin-1 with BOM detection.
-
-- **🔍 Custom Field Parsing**  
-  Handles fields enclosed in `þ` (FE hex) and separated by DC4 (`\x14`).
-
-- **🔁 Smart Line Reader**  
-  Correctly parses logical lines even with embedded newlines inside quoted fields.
-
-- **📊 Header Management**  
-  Extracts headers from the first line or allows replacement via CSV mapping.
-
-- **🧮 Row Validation**  
-  Skips malformed rows with field count mismatches (now validates **all rows**).
-
-- **📈 Excel Compatibility**  
-  Warns if fields exceed Excel's 32,767 character limit.
-
-- **📄 Flexible Output**  
-  Exports to TSV/CSV/DAT with configurable encoding (`utf-16` default, merged DAT files use `utf-8-sig`).
-
-- **🔄 File Comparison**  
-  Compares two DAT files row-by-row with optional header mapping.
-
-- **✏️ Header Replacement**  
-  Renames headers using a CSV mapping file.
+- ✅ Convert `.dat` to `.csv` or back
+- 🔀 Compare two `.dat` files (with optional header mapping)
+- 🧹 Delete specific rows from `.dat` using a value list
+- 🔁 Merge `.dat` files by common headers
+- 🔤 Auto-detect encoding (UTF-8, UTF-16, Windows-1252, Latin-1)
+- 💬 Smart line reader handles embedded newlines
+- 📁 Output directory support via `-o`
+- ⚠️ Excel field-length warning for long text fields
 
 ---
 
-## 🔧 CLI Commands
+## ⚙️ Command Usage
 
 ```bash
-# Convert DAT to TSV/CSV/DAT
-python Main.py input.dat --csv [output.csv]
-python Main.py input.dat --tsv [output.tsv]
-python Main.py input.dat --dat [output.dat]
+python Main.py <input_file> [input_file2] [options]
+````
 
-# Compare two DAT files
-python Main.py file1.dat file2.dat --compare
+### 🔄 Convert `.dat` to `.csv` or `.dat`
 
-# Compare with header mapping
-python Main.py file1.dat file2.dat --compare -m header_map.csv
-
-# Replace headers in DAT file
-python Main.py input.dat --replace-header header_map.csv --replace-output output.dat
-
+```bash
+python Main.py myfile.dat --csv
+python Main.py myfile.dat --tsv -o OutputDir/
+python Main.py myfile.dat --dat
 ```
 
+### 📊 Compare two `.dat` files (row-by-row value diff)
+
+```bash
+python Main.py file1.dat file2.dat --compare
+python Main.py file1.dat file2.dat --compare --mapping Mapped.csv -o diffs/
+```
+
+> ✅ Mapping file format:
+>
+> ```
+> HEADER_A_in_file1,HEADER_B_in_file2
+> ```
+
+### 🔁 Merge `.dat` files by matching headers
+
+```bash
+python Main.py --merge File_list.csv --csv -o merged_output/
+```
+
+> ✅ `File_list.csv` contains one `.dat` file path per row
+
+### 🧹 Delete rows using a list of values
+
+```bash
+python Main.py myfile.dat --delete deleterows.csv --csv
+```
+
+> ✅ `deleterows.csv` format:
+>
+> ```
+> FIELD_NAME
+> VALUE_1
+> VALUE_2
+> ```
+
+### 🔧 Replace headers using a mapping file
+
+```bash
+python Main.py myfile.dat --replace-header HeaderMap.csv --csv
+```
+
+> ✅ `HeaderMap.csv` format:
+>
+> ```
+> OLD_NAME,NEW_NAME
+> ```
+
 ---
 
-## 📝 Notes
+## 📦 Output Files
 
-- **Encoding Defaults**:  
-  - Exports default to `utf-16`.
-  - TSV/CSV exports from merged files retain the **input file's encoding**.
-
-- **Field Format**:  
-  Assumes fields are enclosed in `þ` and separated by DC4 (`\x14`).
-
-- **Validation**:  
-  Only rows matching the header field count are exported.
-
-- **Customization**:  
-  Modify `QUOTE_CHAR`, `FIELD_SEP`, or `EXPORT_ENCODING` in `Main.py` for custom formats.
+* All exports go to the directory specified by `-o`, or default to the input file's folder.
+* Output filenames include tags like `{kept}`, `{removed}`, or `_Replaced`.
 
 ---
 
-## 📦 Requirements
+## 💡 Encoding Detection Logic
 
-- **🐍 Python 3.x**
-- **🔌 No external dependencies** (uses built-in modules: `csv`, `argparse`, `unicodedata`)
+Handles:
+
+* UTF-8 BOM
+* UTF-16 LE/BE
+* Windows-1252 (via printable category)
+* Latin-1 fallback
+
+---
+
+## 🧪 Excel Limit Check
+
+Warns if any field exceeds Excel's max cell limit (32,767 chars).
+
+---
+
+## 📁 Requirements
+
+* Python 3.7+
+* No external libraries (uses standard library only)
+
+---
+
+## 🧰 Development Tips
+
+### VS Code Debug Setup (optional)
+
+Add `.vscode/launch.json`:
+
+```json
+{
+  "name": "Debug Merge Example",
+  "type": "python",
+  "request": "launch",
+  "program": "${workspaceFolder}/Main.py",
+  "console": "integratedTerminal",
+  "args": [
+    "--merge", "File_list.csv", "--csv", "-o", "merged/"
+  ]
+}
+```
 
 ---
 
 ## 👤 Author
 
-- **Md Ehsan Ahsan**  
-  [GitHub Profile](https://github.com/MdEhsanAhsan)
-
-- **License**: MIT
+**Md Ehsan Ahsan**
+📧 [Your email or GitHub](https://github.com/yourname)
+🛠️ Built with love using Python 🐍
 
 ---
 
-## 📌 Tip
+### ⚠️ Disclaimer
 
-For large datasets, use `utf-16-sig` encoding to ensure proper BOM handling in Excel!
-```
+> This tool is provided **as-is** without any warranties.  
+> Use it at your own risk.  
+> I am not responsible if it eats your files, breaks your computer, or ruins your spreadsheet.  
+> 
+> 🚀 But if it helps you automate the boring stuff — you're welcome! 😄
+
+---
+
+## 📝 License
+
+This project is free to use under the [MIT License](LICENSE).

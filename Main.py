@@ -426,7 +426,7 @@ def Merge_dats(merge_file, args):
             excluded_files.append(path)
             continue
         # Create a hash of the headers
-        header_hash = hashlib.md5("||".join(headers).encode()).hexdigest()
+        header_hash = hashlib.sha256("||".join(headers).encode()).hexdigest()
 
         # Collect rows
         rows = []
@@ -440,14 +440,14 @@ def Merge_dats(merge_file, args):
         grouped_files[header_hash].append((path, headers, rows))
         
     m_EXPORT_ENCODING = 'utf-8-sig'  # Set default export encoding for merged files
-    
+    output_dir = args.output_dir or os.path.dirname(merge_file)
     # Export merged groups
     for idx, (header_hash, files_info) in enumerate(grouped_files.items(), 1):
         all_headers = files_info[0][1]
         all_rows = []
         for path, headers, rows in files_info:
             all_rows.extend(rows)
-        output_base = f"merged_group_{idx}"
+        output_base = os.path.join(output_dir, f"merged_group_{idx}.dat")
         print(f"✅ Merging group {idx} with {len(files_info)} files ({len(all_rows)} total rows)")
 
         if args.tsv:
@@ -464,6 +464,72 @@ def Merge_dats(merge_file, args):
         print("\n⚠️ The following files were excluded from merging due to issues:")
         for ex in excluded_files:
             print(f"  - {ex}")
+
+def delete_rows(input_file, delete_file, args):
+    input_name = os.path.splitext(os.path.basename(input_file))[0]
+    input_dir = os.path.dirname(input_file)
+    
+    # Detect input encoding
+    d_Export_ENCODING = detect_encoding(input_file, os.path.basename(input_file))  # Default export encoding for deleted rows
+    
+    # Load delete values
+    delete_encoding = detect_encoding(delete_file, os.path.basename(delete_file))
+    with open(delete_file, encoding=delete_encoding) as f:
+        lines = [line.strip() for line in f if line.strip()]
+        if not lines:
+            print("❌ Deletion file List is empty.")
+            return
+        field = lines[0]
+        delete_values_list = lines[1:]
+        delete_values_set = set(delete_values_list)
+
+    print(f"🧹 Will delete rows where '{field}' is one of: {', '.join(delete_values_list)}")
+
+    # Read headers
+    line_iter = read_dat_file_smart(input_file, d_Export_ENCODING)
+    header_line = next(line_iter)
+    headers = [strip_one_quote(h) for h in header_line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+
+    if field not in headers:
+        print(f"❌ Field '{field}' not found in input file headers: {headers}")
+        return
+
+    if not file_has_valid_rows(input_file, headers, d_Export_ENCODING):
+        print(f"❌ Input file has invalid rows. Aborting delete operation.")
+        return
+
+    # Filter rows
+    kept_rows = []
+    deleted_rows = []
+    for i, line in enumerate(read_dat_file_smart(input_file, d_Export_ENCODING)):
+        if i == 0:
+            continue
+        parsed = parse_line(line, headers)
+        if parsed:
+            if parsed.get(field) in delete_values_set:
+                deleted_rows.append(parsed)
+            else:
+                kept_rows.append(parsed)
+
+    # Output naming
+    output_dir = args.output_dir or input_dir  # fallback to input file dir
+    suffix = lambda label, ext: os.path.join(output_dir, f"{input_name}{{{label}}}{ext}")
+    ext = ".dat" if getattr(args, "dat", False) else ".csv" if args.csv else ".tsv" if args.tsv else ".dat"
+    kept_path = args.dat if getattr(args, "dat", False) and args.dat is not True else suffix("kept", ext)
+    removed_path = args.csv if args.csv not in (False, True, None) else suffix("removed", ext)
+
+    # Export
+    if args.tsv:
+        export_to_tsv(headers, kept_rows, kept_path)
+        export_to_tsv(headers, deleted_rows, removed_path)
+    elif args.csv:
+        export_to_csv(headers, kept_rows, kept_path, encoding=d_Export_ENCODING)
+        export_to_csv(headers, deleted_rows, removed_path, encoding=d_Export_ENCODING)
+    else:
+        export_to_dat(headers, kept_rows, kept_path, encoding=d_Export_ENCODING)
+        export_to_dat(headers, deleted_rows, removed_path, encoding=d_Export_ENCODING)
+
+    print(f"✅ Done. Kept {len(kept_rows)} rows, removed {len(deleted_rows)} rows.")
 
 # Get command-line arguments
 # This function uses argparse to handle command-line arguments for the script.
@@ -524,6 +590,17 @@ def get_arguments():
         metavar="MERGE_FILE",
         help="Merge multiple DAT files into groups of same headers and export as DAT/CSV/TSV"
     )
+    parser.add_argument(
+    "-delete",
+    nargs="?",
+    metavar="DELETE_FILE",
+    help="Path to CSV with field,value to delete from input_file"
+    )
+    parser.add_argument(
+    "-o", "--output-dir",
+    metavar="DIR",
+    help="Optional directory for output files (used with --merge, --compare, --delete)"
+    )
     try:
         return parser.parse_args()
     except SystemExit:
@@ -553,19 +630,23 @@ if __name__ == '__main__':
                 args.input_file2,
                 MAP=map_dic
             )
-            if diffs: # Only export if there are differences
+            if diffs:  # Only export if there are differences
+                output_dir = args.output_dir or os.path.dirname(args.input_file)
+                default_name = f"value_diff"
+                
                 if args.tsv:
-                    output_path = args.tsv if args.tsv is not True else "value_diff.csv"
+                    output_path = args.tsv if args.tsv is not True else os.path.join(output_dir, f"{default_name}.csv")
                     export_to_tsv(headers, diffs, output_path)
                 elif args.csv:
-                    output_path = args.csv if args.csv is not True else "value_diff.csv"
+                    output_path = args.csv if args.csv is not True else os.path.join(output_dir, f"{default_name}.csv")
                     export_to_csv(headers, diffs, output_path, encoding='utf-8-sig')
                 elif getattr(args, "dat", False):
-                    output_path = args.dat if args.dat is not True else "value_diff.dat"
+                    output_path = args.dat if args.dat is not True else os.path.join(output_dir, f"{default_name}.dat")
                     export_to_dat(headers, diffs, output_path)
                 else:
                     print("No export format specified for comparison, defaulting to DAT.")
-                    export_to_dat(headers, diffs, "value_diff.dat")
+                    output_path = os.path.join(output_dir, f"{default_name}.dat")
+                    export_to_dat(headers, diffs, output_path)
             else:
                 print("No differences found during comparison.")
     elif args.replace_header:
@@ -576,11 +657,8 @@ if __name__ == '__main__':
         input_file_path = args.input_file # Define input_file_path here
 
         # Determine output path
-        if args.replace_output:
-            output_dat_path = args.replace_output
-        else:
-            base, ext = os.path.splitext(input_file_path)
-            output_dat_path = f"{base}_Replaced{ext}"
+        output_dir = args.output_dir or os.path.dirname(input_file_path)
+        base_name = os.path.splitext(os.path.basename(input_file_path))[0]
 
         # Load header mapping from file using the dedicated function
         header_map = load_mapping_file(args.replace_header)
@@ -589,19 +667,29 @@ if __name__ == '__main__':
         Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
 
         headers, rows = replace_header_and_collect(input_file_path, header_map, Encode)
+        ext = ".dat"
+
         if args.tsv:
-            output_path = args.tsv if args.tsv is not True else output_dat_path.replace('.dat', '.csv')
-            export_to_tsv(headers, rows, output_path,encoding=Encode)
+            ext = ".tsv"
+            output_path = args.tsv if args.tsv is not True else os.path.join(output_dir, f"{base_name}_Replaced{ext}")
+            export_to_tsv(headers, rows, output_path, encoding=Encode)
         elif args.csv:
-            output_path = args.csv if args.csv is not True else output_dat_path.replace('.dat', '.csv')
+            ext = ".csv"
+            output_path = args.csv if args.csv is not True else os.path.join(output_dir, f"{base_name}_Replaced{ext}")
             export_to_csv(headers, rows, output_path, encoding=Encode)
         elif getattr(args, "dat", False):
-            output_path = args.dat if args.dat is not True else output_dat_path
+            ext = ".dat"
+            output_path = args.dat if args.dat is not True else os.path.join(output_dir, f"{base_name}_Replaced{ext}")
             export_to_dat(headers, rows, output_path, encoding=Encode)
         else:
-            print("No export format specified for header replacement, defaulting to DAT.")
-            export_to_dat(headers, rows, output_dat_path, encoding=Encode)
-
+            output_path = os.path.join(output_dir, f"{base_name}_Replaced{ext}")
+            export_to_dat(headers, rows, output_path, encoding=Encode)
+    elif args.delete:
+        if not args.input_file:
+            print("❌ Please provide the input file along with --delete option.")
+        else:
+            delete_rows(args.input_file, args.delete, args)
+    
     elif args.tsv or args.csv or args.dat: # General conversions (require input_file)
         if not args.input_file:
             print("\n" + "="*60)
@@ -611,39 +699,28 @@ if __name__ == '__main__':
             print("="*60 + "\n")
             exit(2)
         input_file_path = args.input_file # Define input_file_path here
-
+        output_dir = args.output_dir or os.path.dirname(input_file_path)
+        base_name = os.path.splitext(os.path.basename(input_file_path))[0]
         if args.tsv:
             print(f"Converting {input_file_path} to CSV (Tab Separated Values)...")
             Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
-            if args.tsv is True:
-                base, _ = os.path.splitext(input_file_path)
-                output_tsv_path = base + ".csv"
-            else:
-                output_tsv_path = args.tsv
+            output_path = args.tsv if args.tsv is not True else os.path.join(output_dir, f"{base_name}.csv")
             headers, rows = replace_header_and_collect(input_file_path, {}, Encode)
-            export_to_tsv(headers, rows, output_tsv_path)
+            export_to_tsv(headers, rows, output_path)
 
         elif args.csv:
             print(f"Converting {input_file_path} to CSV (Comma Separated Values)...")
             Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
-            if args.csv is True:
-                base, _ = os.path.splitext(input_file_path)
-                output_csv_path = base + ".csv"
-            else:
-                output_csv_path = args.csv
+            output_path = args.csv if args.csv is not True else os.path.join(output_dir, f"{base_name}.csv")
             headers, rows = replace_header_and_collect(input_file_path, {}, Encode)
-            export_to_csv(headers, rows, output_csv_path)
+            export_to_csv(headers, rows, output_path)
 
         elif args.dat:
             print(f"Converting {input_file_path} to DAT...")
             Encode = detect_encoding(input_file_path, os.path.basename(input_file_path))
-            if args.dat is True:
-                base, _ = os.path.splitext(input_file_path)
-                output_dat_path = base + "_converted.dat"
-            else:
-                output_dat_path = args.dat
+            output_path = args.dat if args.dat is not True else os.path.join(output_dir, f"{base_name}_converted.dat")
             headers, rows = replace_header_and_collect(input_file_path, {}, Encode)
-            export_to_dat(headers, rows, output_dat_path)
+            export_to_dat(headers, rows, output_path)
 
     else: # No specific operation or input file provided
         print("\n" + "="*60)
