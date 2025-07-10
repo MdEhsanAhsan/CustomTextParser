@@ -2,7 +2,7 @@
 
 # 📂 CustomTextParser
 
-**Easily convert Concordance `.DAT` load files to `.CSV`, `.TSV`, or cleaned `.DAT` formats.**  
+**Easily convert Concordance `.DAT` load files to `.CSV` or cleaned `.DAT` formats.**  
 Perfect for legal E-discovery or bulk metadata processing.
 
 ---
