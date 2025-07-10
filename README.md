@@ -135,7 +135,7 @@ Add `.vscode/launch.json`:
 ## 👤 Author
 
 **Md Ehsan Ahsan**
-📧 [Your email or GitHub](https://github.com/MdEhsanAhsan)
+📧 [MyGitHub](https://github.com/MdEhsanAhsan)
 🛠️ Built with love using Python 🐍
 
 ---
