@@ -6,7 +6,7 @@ A powerful Python CLI tool for reading, comparing, cleaning, and exporting `.dat
 
 ## ✨ Features
 
-- ✅ Convert `.dat` to `.csv` or back
+- ✅ Convert `.dat` to `.csv`
 - 🔀 Compare two `.dat` files (with optional header mapping)
 - 🧹 Delete specific rows from `.dat` using a value list
 - 🔁 Merge `.dat` files by common headers
@@ -23,7 +23,7 @@ A powerful Python CLI tool for reading, comparing, cleaning, and exporting `.dat
 python Main.py <input_file> [input_file2] [options]
 ````
 
-### 🔄 Convert `.dat` to `.csv` or `.dat`
+### 🔄 Convert `.dat` to `.csv`
 
 ```bash
 python Main.py myfile.dat --csv
@@ -146,7 +146,7 @@ Add `.vscode/launch.json`:
 > Use it at your own risk.  
 > I am not responsible if it eats your files, breaks your computer, or ruins your spreadsheet.  
 > 
-> 🚀 But if it helps you automate the boring stuff — you're welcome! 😄
+> 🚀 But Hey, if it helps you automate the boring stuff — you're welcome! 😄
 
 ---
 
