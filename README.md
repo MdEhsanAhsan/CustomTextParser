@@ -1,4 +1,11 @@
+<!-- SEO: Concordance DAT to CSV, load file converter, export DAT to Excel, .DAT parsing tool, smart DAT file reader, merge Concordance load files, remove rows from DAT -->
+
 # 📂 CustomTextParser
+
+**Easily convert Concordance `.DAT` load files to `.CSV`, `.TSV`, or cleaned `.DAT` formats.**  
+Perfect for legal E-discovery or bulk metadata processing.
+
+---
 
 A powerful Python CLI tool for reading, comparing, cleaning, and exporting `.dat` files with custom delimiters (`þ` + control chars). Designed to handle Excel-incompatible files, embedded line breaks, and encoding challenges with ease.
 
