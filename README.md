@@ -2,88 +2,204 @@
 
 # 📂 CustomTextParser
 
-**Easily convert Concordance `.DAT` load files to `.CSV` or cleaned `.DAT` formats.**  
-Perfect for legal E-discovery or bulk metadata processing.
+## 🔄 Concordance `.DAT` File Toolkit
+
+**Easily convert and manipulate Concordance `.DAT` load files — perfect for legal e-discovery, metadata extraction, and bulk processing.**
 
 ---
 
-A powerful Python CLI tool for reading, comparing, cleaning, and exporting `.dat` files with custom delimiters (`þ` + control chars). Designed to handle Excel-incompatible files, embedded line breaks, and encoding challenges with ease.
+### 🛠 What It Does
+
+A powerful Python CLI tool designed to handle complex `.DAT` files with custom delimiters (`þ`, control characters), broken encodings, and Excel-incompatible data.
+
+This tool can:
+
+* ✅ Convert `.DAT` to `.CSV`
+* 🔁 Compare two `.DAT` files (with optional field mapping)
+* 🧠 Replace or remap headers
+* 🔗 Merge multiple `.DAT` files intelligently
+* 🧹 Delete rows based on field values
+* 🎯 Extract and export selected fields
 
 ---
 
-## ✨ Features
+### ⚙️ Key Features
 
-- ✅ Convert `.dat` to `.csv`
+* Handles Concordance `.DAT` files with embedded line breaks
+* Supports various encodings: `UTF-8`, `UTF-16`, `Windows-1252`, and more
+* Robust parsing even with Excel’s 32,767 character cell limit
+* CLI-first design — ideal for automation and scripting
+
+---
+
+### 🚀 Use Cases
+
+* Legal eDiscovery processing
+* Metadata cleanup and normalization
+* Custom conversions and field extraction
+* Comparing vendor-delivered load files
+
+## 📦 Installation
+
+### Clone the repo
+
+```bash
+git clone https://github.com/yourusername/dat-file-tool.git
+cd dat-file-tool
+```
+
+### Install dependencies (optional)
+
+This tool uses only built-in libraries — **no external packages required**!
+
+---
+
+### ✨ Features
+
+- ✅ Convert `.dat` to `.csv` or keep as `.dat`
 - 🔀 Compare two `.dat` files (with optional header mapping)
 - 🧹 Delete specific rows from `.dat` using a value list
 - 🔁 Merge `.dat` files by common headers
 - 🔤 Auto-detect encoding (UTF-8, UTF-16, Windows-1252, Latin-1)
-- 💬 Smart line reader handles embedded newlines
-- 📁 Output directory support via `-o`
-- ⚠️ Excel field-length warning for long text fields
+- 💬 Smart line reader handles embedded newlines and quoted fields
+- 📁 Output directory support via `-o DIR`
+- ⚠️ Excel field-length warning for long text fields (>32,767 chars)
+- 🎯 Select only specific fields from a DAT file using `--select`
+
+| Feature       | Description |
+|---------------|-------------|
+| `--csv`       | Export DAT file to CSV format (Comma Separated Value) |
+| `--tsv`       | Export DAT file to TSV format (Tab Separated Value) |
+| `--dat`       | Export to DAT format (default if none specified) |
+| `-c`, `--compare` | Compare two DAT files line-by-line |
+| `-r`, `--replace-header` | Replace headers using a mapping file (`old_header,new_header`) |
+| `--merge`     | Merge multiple DAT files grouped by matching headers |
+| `--delete`    | Delete rows based on field values listed in a file |
+| `--select`    | Export only selected fields from the DAT file |
+| `-o DIR`      | Specify output directory for generated files |
 
 ---
 
-## ⚙️ Command Usage
+## 🧪 Usage Examples
+
+### 🔁 Convert DAT to CSV / TSV
 
 ```bash
-python Main.py <input_file> [input_file2] [options]
-````
+python Main.py input.dat --csv
+# Output: input_converted.csv
 
-### 🔄 Convert `.dat` to `.csv`
-
-```bash
-python Main.py myfile.dat --csv
-python Main.py myfile.dat --tsv -o OutputDir/
-python Main.py myfile.dat --dat
+python Main.py input.dat --tsv
+# Output: input_converted.tsv
 ```
 
-### 📊 Compare two `.dat` files (row-by-row value diff)
+You can also specify custom output paths:
 
 ```bash
-python Main.py file1.dat file2.dat --compare
-python Main.py file1.dat file2.dat --compare --mapping Mapped.csv -o diffs/
+python Main.py input.dat --csv output.csv
 ```
 
-> ✅ Mapping file format:
->
-> ```
-> HEADER_A_in_file1,HEADER_B_in_file2
-> ```
+---
 
-### 🔁 Merge `.dat` files by matching headers
+### 🆚 Compare Two DAT Files
 
 ```bash
-python Main.py --merge File_list.csv --csv -o merged_output/
+python Main.py file1.dat file2.dat -c
 ```
 
-> ✅ `File_list.csv` contains one `.dat` file path per row
-
-### 🧹 Delete rows using a list of values
+With optional header mapping:
 
 ```bash
-python Main.py myfile.dat --delete deleterows.csv --csv
+python Main.py file1.dat file2.dat -c -m mapping.csv
 ```
 
-> ✅ `deleterows.csv` format:
->
-> ```
-> FIELD_NAME
-> VALUE_1
-> VALUE_2
-> ```
+Outputs differences to `value_diff.csv` (or `.dat`).
 
-### 🔧 Replace headers using a mapping file
+---
+
+### 🔄 Replace Headers Using Mapping File
+
+Create a mapping file (`mapping.csv`) like:
+
+```csv
+OldHeader1,NewHeader1
+OldHeader2,NewHeader2
+```
+
+Run:
 
 ```bash
-python Main.py myfile.dat --replace-header HeaderMap.csv --csv
+python Main.py input.dat -r mapping.csv --csv
+# Output: input_Replaced.csv
 ```
 
-> ✅ `HeaderMap.csv` format:
->
-> ```
-> OLD_NAME,NEW_NAME
-> ```
+---
+
+### 📦 Merge Multiple DAT Files
+
+Create a merge list file (`merge_list.csv`) containing one file path per line:
+
+```
+file1.dat
+file2.dat
+file3.dat
+```
+
+Then run:
+
+```bash
+python Main.py --merge merge_list.csv
+# Outputs: merged_group_1.dat, merged_group_2.dat, etc.
+```
+
+Also creates a log file: `merged_group_log.csv`.
+
+---
+
+### 🗑️ Delete Rows Based on Field Value
+
+Create a delete file (`delete.csv`) with the field name on the first line and values to delete below:
+
+```
+ID
+1001
+1003
+1007
+```
+
+Run:
+
+```bash
+python Main.py input.dat --delete delete.csv --csv
+# Outputs: input{kept}.csv and input{removed}.csv
+```
+
+---
+
+### 🔍 Select Only Specific Fields
+
+Create a selection file (`select.txt`) with one header per line:
+
+```
+Name
+Age
+City
+```
+
+Run:
+
+```bash
+python Main.py input.dat --select select.txt --csv
+# Output: input_selected.csv
+```
+
+---
+
+## ⚙️ Optional Arguments
+
+| Flag         | Description |
+|--------------|-------------|
+| `-o DIR`     | Set output directory |
+| `--help`     | Show help message |
 
 ---
 
@@ -136,6 +252,10 @@ Add `.vscode/launch.json`:
   ]
 }
 ```
+---
+## 🤝 Contributing
+
+Feel free to fork, enhance, or report issues! Contributions are welcome 💬
 
 ---
 
