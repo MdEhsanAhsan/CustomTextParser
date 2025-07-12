@@ -269,8 +269,12 @@ def excel_warning(headers, rows, warn_limit=32767):
         for h in headers:
             val = str(row.get(h, ""))
             if len(val) > warn_limit:
-                print(f"Warning: Value in row {row_idx}, column '{h}' exceeds Excel's 32,767 character cell limit ({len(val)} chars)❗")
-                print(f"Excel won't display correctly! Consider truncating or splitting this value.❗")
+                print(" ╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════╗")
+                print(f" ║ Warning: Value in row {row_idx}, column '{h}' exceeds Excel's 32,767 char limit ({len(val)} chars)!    ║")
+                print(" ║ Excel may not display this cell correctly. Consider truncating or splitting.                              ║")
+                print(" ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════╝")
+
+
 
 # === Export Functions ===
 def export_to_tsv(headers, rows, output_path, encoding=EXPORT_ENCODING):

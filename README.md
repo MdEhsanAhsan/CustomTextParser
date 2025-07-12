@@ -40,6 +40,7 @@ This tool can:
 * Comparing vendor-delivered load files
 
 ## 📦 Installation
+📥 [Download EXE]([https://github.com/MdEhsanAhsan/CustomTextParser/releases/tag/v1.0.0])
 
 ### Clone the repo
 
