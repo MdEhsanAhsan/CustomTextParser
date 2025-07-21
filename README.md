@@ -23,6 +23,36 @@ This tool can:
 
 ---
 
+---
+
+## ⚡ Cython Acceleration (v1.1+)
+
+This tool now uses **Cython-compiled quote-aware parsing** for maximum speed on large `.DAT` files.
+
+### 🚀 Performance Gain
+| File Size   | Rows      | Before (Pure Python) | Now (Cython) |
+|-------------|-----------|----------------------|---------------|
+| 131 MB      | ~90k      | ~17 sec              | **3.45 sec**  |
+| 204 MB      | ~1.1M     | ~52 sec              | **13.56 sec** |
+| 1.06 GB     | ~5.7M     | ~300 sec             | **64.39 sec** |
+
+> ✅ Quote-safe, newline-tolerant, and 4–5× faster than the previous version.
+
+### 🧱 How It Works
+A custom parser module (`quote_split_chunked.pyx`) is written in Cython and compiled to a native `.pyd` extension, enabling fast, chunked line processing while preserving quote-state logic.
+
+### 🛠 Compiling the Cython Module
+
+Install a C compiler first:
+- Windows: [Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+- Linux: `sudo apt install build-essential python3-dev`
+- macOS: `xcode-select --install`
+
+Then build:
+```bash
+python setup.py build_ext --inplace
+
+
 ### ⚙️ Key Features
 
 * Handles Concordance `.DAT` files with embedded line breaks
@@ -40,7 +70,7 @@ This tool can:
 * Comparing vendor-delivered load files
 
 ## 📦 Installation
-📥 [Download EXE](https://github.com/MdEhsanAhsan/CustomTextParser/releases/tag/v1.0.0)
+📥 [Download EXE](https://github.com/MdEhsanAhsan/CustomTextParser/releases/tag/v2.0.0)
 
 ### Clone the repo
 
