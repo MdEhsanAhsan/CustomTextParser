@@ -1,3 +1,5 @@
+import codecs
+import io
 from heapq import merge
 import sys
 from unicodedata import category
@@ -6,11 +8,15 @@ import csv
 import argparse
 from collections import defaultdict, OrderedDict
 import hashlib
+import mmap
+import time
 
 
 # === Global Constants ===
 QUOTE_CHAR = '\xfe'  # Quote character used to enclose fields.
-FIELD_SEP = '\x14'  # Field separator (DC4)
+FIELD_SEP = '\x14'   # Field separator (DC4)
+LINE_ENDINGS = ('\n', '\r\n', '\r')
+MAX_MEMORY_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
 EXPORT_ENCODING = 'utf-16'
 
 # === Character Reader Class ===
@@ -49,7 +55,6 @@ class CharReader:
             return (None, None)
 
 # === Helper Functions ===
-
 def get_output_path(input_path, suffix="", ext=".dat", output_dir=None):
     base_name = os.path.splitext(os.path.basename(input_path))[0]
     if ext == ".tsv":
@@ -78,16 +83,17 @@ def detect_and_open(file_path, mode='r'):
 
 
 def read_headers_and_rows(file_path):
-    with detect_and_open(file_path) as f:
-        reader = CharReader(f)
-        header_line = next(read_dat_file_smart(file_path, encoding=detect_encoding(file_path, "")))
-        headers = [strip_one_quote(h) for h in header_line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
-        rows = []
-        for line in read_dat_file_smart(file_path, encoding=detect_encoding(file_path, "")):
+    encoding = detect_encoding(file_path, os.path.basename(file_path))
+    headers = []
+    rows = []
+    for i, line in enumerate(read_dat_file_smart(file_path, encoding=encoding)):
+        if i == 0:
+            headers = [strip_one_quote(h) for h in line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+        else:
             parsed = parse_line(line, headers)
             if parsed:
                 rows.append(parsed)
-        return headers, rows
+    return headers, rows
 
 
 def export_data(headers, rows, output_path, fmt="dat", encoding=EXPORT_ENCODING):
@@ -101,6 +107,74 @@ def export_data(headers, rows, output_path, fmt="dat", encoding=EXPORT_ENCODING)
     else:
         export_to_dat(headers, rows, output_path, encoding=encoding)
 
+
+# === Export Functions ===
+def export_to_tsv(headers, rows, output_path, encoding=EXPORT_ENCODING):
+    with open(output_path, 'w', newline='', encoding=encoding) as tsvfile:
+        writer = csv.DictWriter(tsvfile, fieldnames=headers, delimiter='\t', quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        writer.writerows([{h: str(row.get(h, "")) for h in headers} for row in rows])
+    print(f"Exported {len(rows)} rows to {output_path}")
+
+
+def export_to_csv(headers, rows, output_path, encoding=EXPORT_ENCODING):
+    find_encoding_errors(rows, headers, encoding=encoding)  # or 'ansi'
+    with open(output_path, 'w', newline='', encoding=encoding) as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=headers, delimiter=',', quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        writer.writerows([{h: str(row.get(h, "")) for h in headers} for row in rows])
+    print(f"Exported {len(rows)} rows to {output_path}")
+
+
+def export_to_dat(headers, rows, output_path, encoding=EXPORT_ENCODING):
+    sep = QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR
+    with open(output_path, 'w', encoding=encoding, newline='') as f:
+        header_line = sep.join(headers)
+        f.write(f"{QUOTE_CHAR}{header_line}{QUOTE_CHAR}\r\n")
+        for row in rows:
+            fields = [str(row.get(h, '')) for h in headers]
+            line = sep.join(fields)
+            f.write(f"{QUOTE_CHAR}{line}{QUOTE_CHAR}\r\n")
+    print(f"Exported {len(rows)} rows to {output_path}")
+
+
+# === Excel Warnings ===
+def excel_warning(headers, rows, warn_limit=32767, max_warnings=20):
+    """
+    Collects warnings for Excel cell length and prints a compact table.
+    """
+    warnings = []
+    for row_idx, row in enumerate(rows, 2):
+        for h in headers:
+            val = str(row.get(h, ""))
+            if len(val) > warn_limit:
+                warnings.append((h, row_idx, len(val)))
+                if len(warnings) >= max_warnings:
+                    break
+        if len(warnings) >= max_warnings:
+            break
+
+    if warnings:
+        print("════════════════════════════════════════════════════════════════════════════════════════════════════════")
+        print(f"{'FieldName':<15}{'RowNo.':<10}{'CurrentLength':<15}")
+        for h, row_idx, length in warnings:
+            print(f"{h:<15}{row_idx:<10}{length:<15}")
+        if len(warnings) == max_warnings:
+            print(f"...Further warnings suppressed. Only first {max_warnings} shown.")
+        print("Warning: Excel may not display these cells correctly. Consider truncating or splitting.")
+        print("════════════════════════════════════════════════════════════════════════════════════════════════════════")
+
+
+def find_encoding_errors(rows, headers, encoding='cp1252'):
+    for line_num, row in enumerate(rows, 1):
+        for h in headers:
+            val = str(row.get(h, ''))
+            try:
+                val.encode(encoding)
+            except UnicodeEncodeError as e:
+                print(f"Encoding error on line {line_num}, column '{h}': {repr(val)}")
+                print(f" -> Bad character: {repr(val[e.start:e.end])}")
+                return  # stop on first error or remove this to check all
 
 def get_mapping_dict(mapping_file):
     if not mapping_file:
@@ -209,35 +283,124 @@ def detect_encoding(file_path, fname):
 # === Line Reader & Parser ===
 
 def read_dat_file_smart(file_path, encoding):
-    """
-    Reads a DAT file smartly, ignoring newlines that occur inside quoted fields.
-    Yields complete logical lines.
-    """
-    with open(file_path, 'r', encoding=encoding) as f:
-        reader = CharReader(f)
-        buffer = ''
-        in_quote = False  # Track whether we are inside a quoted field
+    file_size = os.path.getsize(file_path)
 
-        while True:
-            char = reader.read()
-            peeked = reader.peek_two()
-            next_chars = "".join(c if c is not None else "" for c in peeked)
-            if not char:
-                if buffer:
-                    yield buffer.strip('\r\n')
-                break
+    if file_size <= MAX_MEMORY_FILE_SIZE:
+        with open(file_path, 'r', encoding=encoding, newline='', errors='replace') as f:
+            content = f.read()
+        yield from _process_content(content)
+    else:
+        decoder = codecs.getincrementaldecoder(encoding)(errors='replace')
+        chunk_size = 4096 * 16  # 64KB per chunk
 
-            if char == QUOTE_CHAR and not in_quote:
-                in_quote = True
-                buffer += char
-            elif char == QUOTE_CHAR and in_quote and (next_chars == FIELD_SEP + QUOTE_CHAR or next_chars == '\n' + QUOTE_CHAR):
-                in_quote = False
-                buffer += char
-            elif (char == '\n' or char == '\r') and not in_quote and next_chars != FIELD_SEP + QUOTE_CHAR:
-                yield buffer.strip('\r\n')
+        with open(file_path, 'rb') as f:
+            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                pos = 0
                 buffer = ''
+
+                while pos < file_size:
+                    end = min(pos + chunk_size, file_size)
+                    raw_bytes = mm[pos:end]
+                    pos = end
+
+                    decoded = decoder.decode(raw_bytes)
+                    buffer += decoded
+
+                    # Split on line endings outside quoted fields
+                    lines = []
+                    i = 0
+                    n = len(buffer)
+                    in_quote = False
+                    line_start = 0
+
+                    while i < n:
+                        c = buffer[i]
+                        next_c = buffer[i+1] if i+1 < n else ''
+                        next_two = buffer[i+1:i+3] if i+2 < n else ''
+
+                        if c == QUOTE_CHAR and not in_quote:
+                            in_quote = True
+                        elif c == QUOTE_CHAR and in_quote and (next_two == FIELD_SEP + QUOTE_CHAR or next_two in LINE_ENDINGS or next_two == '\n'+ QUOTE_CHAR or next_two == '\r'+ QUOTE_CHAR):
+                            in_quote = False
+                        elif c in LINE_ENDINGS and not in_quote and next_two != QUOTE_CHAR + FIELD_SEP:
+                            lines.append(buffer[line_start:i])
+                            if c in LINE_ENDINGS and next_c in LINE_ENDINGS:
+                                # Handle CRLF or LF
+                                i += 1
+                            line_start = i + 1
+                        i += 1
+                    # Remaining buffer for next chunk
+                    buffer = buffer[line_start:]
+                    yield from lines
+
+                # Yield any remaining content
+                if buffer:
+                    yield buffer
+    print(f"-----\nRead:{human_readable_size(file_size)}\n-----")
+
+def human_readable_size(size_in_bytes):
+    """
+    Convert a file size in bytes to a human-readable string (KB, MB, GB).
+    """
+    if size_in_bytes < 1024:
+        return f"{size_in_bytes} bytes"
+    elif size_in_bytes < 1024**2:
+        return f"{size_in_bytes / 1024:.2f} KB"
+    elif size_in_bytes < 1024**3:
+        return f"{size_in_bytes / (1024**2):.2f} MB"
+    else:
+        return f"{size_in_bytes / (1024**3):.2f} GB"
+
+def _process_content(content):
+    buffer = io.StringIO()
+    in_quote = False
+    i = 0
+    n = len(content)
+
+    while i < n:
+        char = content[i]
+        next_char = content[i+1] if i+1 < n else ''
+        next_two = content[i+1:i+3]
+
+        # Entering quoted field
+        if char == QUOTE_CHAR and not in_quote:
+            in_quote = True
+            buffer.write(char)
+            i += 1
+
+        # Exiting quoted field
+        elif char == QUOTE_CHAR and in_quote:
+            if next_char == FIELD_SEP or next_char in LINE_ENDINGS or next_two in LINE_ENDINGS:
+                in_quote = False
+                buffer.write(char)
+                i += 1
             else:
-                buffer += char
+                buffer.write(char)
+                i += 1
+
+        # Line ending outside quoted field
+        elif char in LINE_ENDINGS and not in_quote:
+            if char == '\r' and next_char == '\n':
+                i += 2
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+            else:
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+                i += 1
+
+        # Regular character
+        else:
+            buffer.write(char)
+            i += 1
+
+    # Yield any remaining content
+    remaining = buffer.getvalue()
+    if remaining:
+        yield remaining
+    buffer.close()
 
 # === Strip only one leading and one trailing QUOTE_CHAR if present ===
 def strip_one_quote(s):
@@ -260,49 +423,7 @@ def parse_line(line, headers):
     row = {header: value for header, value in zip(headers, values)}
     return row
 
-# === Excel Warnings ===
-def excel_warning(headers, rows, warn_limit=32767):
-    """
-    Warns if any field value exceeds Excel's 32,767 character cell limit.
-    """
-    for row_idx, row in enumerate(rows, 2):
-        for h in headers:
-            val = str(row.get(h, ""))
-            if len(val) > warn_limit:
-                print(" ╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════╗")
-                print(f" ║ Warning: Value in row {row_idx}, column '{h}' exceeds Excel's 32,767 char limit ({len(val)} chars)!    ║")
-                print(" ║ Excel may not display this cell correctly. Consider truncating or splitting.                              ║")
-                print(" ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════╝")
 
-
-
-# === Export Functions ===
-def export_to_tsv(headers, rows, output_path, encoding=EXPORT_ENCODING):
-    with open(output_path, 'w', newline='', encoding=encoding) as tsvfile:
-        writer = csv.DictWriter(tsvfile, fieldnames=headers, delimiter='\t', quoting=csv.QUOTE_ALL)
-        writer.writeheader()
-        writer.writerows([{h: str(row.get(h, "")) for h in headers} for row in rows])
-    print(f"Exported {len(rows)} rows to {output_path}")
-
-
-def export_to_csv(headers, rows, output_path, encoding=EXPORT_ENCODING):
-    with open(output_path, 'w', newline='', encoding=encoding) as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=headers, delimiter=',', quoting=csv.QUOTE_ALL)
-        writer.writeheader()
-        writer.writerows([{h: str(row.get(h, "")) for h in headers} for row in rows])
-    print(f"Exported {len(rows)} rows to {output_path}")
-
-
-def export_to_dat(headers, rows, output_path, encoding=EXPORT_ENCODING):
-    sep = QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR
-    with open(output_path, 'w', encoding=encoding, newline='') as f:
-        header_line = sep.join(headers)
-        f.write(f"{QUOTE_CHAR}{header_line}{QUOTE_CHAR}\r\n")
-        for row in rows:
-            fields = [str(row.get(h, '')) for h in headers]
-            line = sep.join(fields)
-            f.write(f"{QUOTE_CHAR}{line}{QUOTE_CHAR}\r\n")
-    print(f"Exported {len(rows)} rows to {output_path}")
 
 # === Mapping Header Function ===
 
@@ -640,6 +761,9 @@ def get_arguments():
 # === Main Execution ===
 
 if __name__ == '__main__':
+    
+    start_time = time.time()  # Start the timer
+
     args = get_arguments()
 
     # Check if a primary operation is specified
@@ -740,3 +864,7 @@ if __name__ == '__main__':
         print("  Please provide an input file or use the --merge option.\n")
         print("  For help, run:\n  python Main_Refactored.py --help")
         print("=" * 60 + "\n")
+    
+    end_time = time.time()  # End the timer
+    elapsed_time = end_time - start_time
+    print(f"Elapsed time: {elapsed_time:.2f} seconds")
