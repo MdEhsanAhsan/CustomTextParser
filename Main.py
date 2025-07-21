@@ -657,7 +657,17 @@ def file_has_valid_rows(file_path, headers, encoding):
             return False
     return True
 
-    # === Argument Parsing ===
+# === Print Logo ===
+def print_logo():
+    logo = r'''
+   ______              
+  / __/ /  ______ ____ 
+ / _// _ \(_-< _ `/ _ \
+/___/_//_/___|_,_/_//_/
+    -----Author: Ehsan
+    '''
+    print(logo)
+# === Argument Parsing ===
 
 def get_arguments():
     parser = argparse.ArgumentParser(description="DAT File converter utility", formatter_class=argparse.RawTextHelpFormatter)
@@ -689,7 +699,7 @@ def get_arguments():
 if __name__ == '__main__':
     
     start_time = time.time()  # Start the timer
-
+    print_logo()  # Print the logo
     args = get_arguments()
 
     # Check if a primary operation is specified

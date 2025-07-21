@@ -1,5 +1,6 @@
 #Build Files
 *.spec
+*.ico
 dist/
 # Python Environment
 build/
