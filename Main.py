@@ -10,6 +10,7 @@ from collections import defaultdict, OrderedDict
 import hashlib
 import mmap
 import time
+from Module.quote_split_chunked import QuoteLineSplitter  # Import the Cython module for optimized performance
 
 
 # === Global Constants ===
@@ -284,60 +285,36 @@ def detect_encoding(file_path, fname):
 
 def read_dat_file_smart(file_path, encoding):
     file_size = os.path.getsize(file_path)
+    chunk_size = 64 * 1024
 
     if file_size <= MAX_MEMORY_FILE_SIZE:
-        with open(file_path, 'r', encoding=encoding, newline='', errors='replace') as f:
+        with open(file_path, 'r', encoding=encoding, errors='replace', newline='') as f:
             content = f.read()
-        yield from _process_content(content)
+            # yield from _process_content(content)
+        splitter = QuoteLineSplitter()
+        for line in splitter.feed_chunk(content) + splitter.flush():
+            yield line
     else:
         decoder = codecs.getincrementaldecoder(encoding)(errors='replace')
-        chunk_size = 4096 * 16  # 64KB per chunk
+        splitter = QuoteLineSplitter()
 
-        with open(file_path, 'rb') as f:
+        with open(file_path, 'rb', newline='') as f:
             with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
                 pos = 0
-                buffer = ''
-
                 while pos < file_size:
                     end = min(pos + chunk_size, file_size)
-                    raw_bytes = mm[pos:end]
+                    chunk = mm[pos:end]
                     pos = end
 
-                    decoded = decoder.decode(raw_bytes)
-                    buffer += decoded
+                    decoded = decoder.decode(chunk)
+                    for line in splitter.feed_chunk(decoded):
+                        yield line
 
-                    # Split on line endings outside quoted fields
-                    lines = []
-                    i = 0
-                    n = len(buffer)
-                    in_quote = False
-                    line_start = 0
-
-                    while i < n:
-                        c = buffer[i]
-                        next_c = buffer[i+1] if i+1 < n else ''
-                        next_two = buffer[i+1:i+3] if i+2 < n else ''
-
-                        if c == QUOTE_CHAR and not in_quote:
-                            in_quote = True
-                        elif c == QUOTE_CHAR and in_quote and (next_two == FIELD_SEP + QUOTE_CHAR or next_two in LINE_ENDINGS or next_two == '\n'+ QUOTE_CHAR or next_two == '\r'+ QUOTE_CHAR):
-                            in_quote = False
-                        elif c in LINE_ENDINGS and not in_quote and next_two != QUOTE_CHAR + FIELD_SEP:
-                            lines.append(buffer[line_start:i])
-                            if c in LINE_ENDINGS and next_c in LINE_ENDINGS:
-                                # Handle CRLF or LF
-                                i += 1
-                            line_start = i + 1
-                        i += 1
-                    # Remaining buffer for next chunk
-                    buffer = buffer[line_start:]
-                    yield from lines
-
-                # Yield any remaining content
-                if buffer:
-                    yield buffer
+                for line in splitter.flush():
+                    yield line
     print(f"-----\nRead:{human_readable_size(file_size)}\n-----")
 
+# === Human Readable Size Function ===
 def human_readable_size(size_in_bytes):
     """
     Convert a file size in bytes to a human-readable string (KB, MB, GB).
@@ -350,57 +327,6 @@ def human_readable_size(size_in_bytes):
         return f"{size_in_bytes / (1024**2):.2f} MB"
     else:
         return f"{size_in_bytes / (1024**3):.2f} GB"
-
-def _process_content(content):
-    buffer = io.StringIO()
-    in_quote = False
-    i = 0
-    n = len(content)
-
-    while i < n:
-        char = content[i]
-        next_char = content[i+1] if i+1 < n else ''
-        next_two = content[i+1:i+3]
-
-        # Entering quoted field
-        if char == QUOTE_CHAR and not in_quote:
-            in_quote = True
-            buffer.write(char)
-            i += 1
-
-        # Exiting quoted field
-        elif char == QUOTE_CHAR and in_quote:
-            if next_char == FIELD_SEP or next_char in LINE_ENDINGS or next_two in LINE_ENDINGS:
-                in_quote = False
-                buffer.write(char)
-                i += 1
-            else:
-                buffer.write(char)
-                i += 1
-
-        # Line ending outside quoted field
-        elif char in LINE_ENDINGS and not in_quote:
-            if char == '\r' and next_char == '\n':
-                i += 2
-                yield buffer.getvalue()
-                buffer.seek(0)
-                buffer.truncate(0)
-            else:
-                yield buffer.getvalue()
-                buffer.seek(0)
-                buffer.truncate(0)
-                i += 1
-
-        # Regular character
-        else:
-            buffer.write(char)
-            i += 1
-
-    # Yield any remaining content
-    remaining = buffer.getvalue()
-    if remaining:
-        yield remaining
-    buffer.close()
 
 # === Strip only one leading and one trailing QUOTE_CHAR if present ===
 def strip_one_quote(s):
