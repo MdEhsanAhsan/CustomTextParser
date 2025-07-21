@@ -69,7 +69,8 @@ python setup.py build_ext --inplace
 * Custom conversions and field extraction
 * Comparing vendor-delivered load files
 
-## 📦 Installation  
+## 📦 Installation
+
 📥 [Download EXE](https://github.com/MdEhsanAhsan/CustomTextParser/releases/tag/v2.0.0)
 
 
