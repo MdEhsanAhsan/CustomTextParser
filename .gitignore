@@ -4,3 +4,4 @@
 dist/
 # Python Environment
 build/
+.vscode/

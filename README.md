@@ -107,6 +107,8 @@ This tool uses only built-in libraries — **no external packages required**!
 | `--merge`     | Merge multiple DAT files grouped by matching headers |
 | `--delete`    | Delete rows based on field values listed in a file |
 | `--select`    | Export only selected fields from the DAT file |
+| `-join`       | Strictly join two DAT files using a key field, with duplicate header conflict resolution |
+|`--key`        | Key field required to perform join |
 | `-o DIR`      | Specify output directory for generated files |
 
 ---
@@ -222,6 +224,14 @@ Run:
 python Main.py input.dat --select select.txt --csv
 # Output: input_selected.csv
 ```
+---
+
+### 🔗 Strict Join of Two DAT Files
+
+Join two DAT files based on one or more key fields, with strict validation:
+
+```bash
+python Main.py file1.dat file2.dat -join --key ID
 
 ---
 
