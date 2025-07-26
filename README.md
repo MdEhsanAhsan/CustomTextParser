@@ -253,13 +253,12 @@ python Main.py file1.dat file2.dat -join --key ID
 
 ## 💡 Encoding Detection Logic
 
-Handles:
+Handles common encodings reliably:
 
-* UTF-8 BOM
-* UTF-16 LE/BE
-* Windows-1252 (via printable category)
-* Latin-1 fallback
-
+* ✅ UTF-8
+* ✅ UTF-8 with BOM
+* ✅ UTF-16 LE / BE (BOM detection)
+* 🔍 Uses `chardet` fallback for uncertain cases (based on confidence)
 ---
 
 ## 🧪 Excel Limit Check
