@@ -51,7 +51,7 @@ Install a C compiler first:
 Then build:
 ```bash
 python setup.py build_ext --inplace
-
+```
 
 ### ⚙️ Key Features
 
