@@ -81,7 +81,9 @@ cd dat-file-tool
 
 ### Install dependencies (optional)
 
-This tool uses only built-in libraries — **no external packages required**!
+* Python 3.7+
+* Requires: `chardet`
+* Optional: `cython` for native-speed parsing
 
 ---
 
