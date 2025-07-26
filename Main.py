@@ -10,6 +10,7 @@ from collections import defaultdict, OrderedDict
 import hashlib
 import mmap
 import time
+import chardet
 from Module.quote_split_chunked import QuoteLineSplitter  # Import the Cython module for optimized performance
 
 
@@ -83,13 +84,15 @@ def detect_and_open(file_path, mode='r'):
     return open(file_path, mode, encoding=encoding)
 
 
-def read_headers_and_rows(file_path):
-    encoding = detect_encoding(file_path, os.path.basename(file_path))
+def read_headers_and_rows(file_path, encoding=None):
+    if encoding is None:
+        encoding = detect_encoding(file_path, os.path.basename(file_path))
     headers = []
     rows = []
     for i, line in enumerate(read_dat_file_smart(file_path, encoding=encoding)):
         if i == 0:
             headers = [strip_one_quote(h) for h in line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+            validate_headers(headers, os.path.basename(file_path))
         else:
             parsed = parse_line(line, headers)
             if parsed:
@@ -196,8 +199,8 @@ def detect_encoding(file_path, fname):
     try:
 
         with open(file_path, 'rb') as file:
-
-            raw = file.read(4096)  # Read first 4KB for better analysis
+            size_chunk = 1 * 1024 * 1024  # 1 MB chunk size for large files
+            raw = file.read(size_chunk)  # Read first 1MB for better analysis
 
             # Check for BOM signatures first.
 
@@ -218,61 +221,19 @@ def detect_encoding(file_path, fname):
                 print(f"{fname} is detected as UTF-16 BE BOM")
 
                 return 'utf-16'
-
-            # Try to decode as UTF-8 (heuristic: if no error, assume UTF-8).
-
-            try:
-
-                raw.decode('utf-8')
-
-                print(f"{fname} is detected as UTF-8 (heuristic: decodes without error)")
-
+            elif raw.startswith(b'\xc3\xbe'):
+                print(f"{fname} is detected as UTF-8")
                 return 'utf-8'
-
-            except UnicodeDecodeError:
-
-                pass
-
-            # Fallback to latin-1
-
             try:
-
-                data = file.read()
-
-                for b in data:
-
-                    if 0x80 <= b <= 0x9F:
-
-                        #decode with Windows-1252 and Latin-1
-
-                        char_win = bytes([b]).decode('windows-1252',errors='replace')
-
-                        char_latin = bytes([b]).decode('latin-1',errors='replace')
-
-                        #Check category
-
-                        cat_win = category(char_win)
-
-                        cat_latin = category(char_latin)
-
-                        #Printable in Windows-1252 but Control Number in Latin-1
-
-                        if not cat_win.startswith('C') and cat_latin.startswith('C'):
-
-                            print(f"{fname} is detected as Windows-1252")
-
-                            return 'Windows-1252'
-
-                # No definitive Windows-1252 charater found
-
-                print(f"{fname} is detected as LATIN-1")
-
-                return 'LATIN-1'
-
-            except UnicodeDecodeError:
-
-                print(f"{fname}: Unable to determine encoding using heuristics.")
-
+                
+                enc = chardet.detect(raw)
+                print(f"{fname} is detected as {enc['encoding']} (confidence: {enc['confidence']:.2%})")
+                if enc['encoding'] is None or enc['confidence'] < 0.5:
+                    print(f"Warning: Low confidence in encoding detection for {fname}. Defaulting to 'utf-8'.\nIf you encounter issues, consider manually change the encoding of file to UTF-8 BOM.")
+                    return 'utf-8'
+                return enc['encoding']
+            except Exception as e:
+                print(f"Error detecting encoding for {fname}: {e}")
                 return 'Error'
 
     except FileNotFoundError:
@@ -285,7 +246,7 @@ def detect_encoding(file_path, fname):
 
 def read_dat_file_smart(file_path, encoding):
     file_size = os.path.getsize(file_path)
-    chunk_size = 64 * 1024
+    chunk_size = 2 * 1024 * 1024 # 2 MB chunk size for large files
 
     if file_size <= MAX_MEMORY_FILE_SIZE:
         with open(file_path, 'r', encoding=encoding, errors='replace', newline='') as f:
@@ -298,7 +259,7 @@ def read_dat_file_smart(file_path, encoding):
         decoder = codecs.getincrementaldecoder(encoding)(errors='replace')
         splitter = QuoteLineSplitter()
 
-        with open(file_path, 'rb', newline='') as f:
+        with open(file_path, 'rb') as f:
             with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
                 pos = 0
                 while pos < file_size:
@@ -312,7 +273,7 @@ def read_dat_file_smart(file_path, encoding):
 
                 for line in splitter.flush():
                     yield line
-    print(f"-----\nRead:{human_readable_size(file_size)}\n-----")
+    print(f"-----\nFileSize:{human_readable_size(file_size)}\n-----")
 
 # === Human Readable Size Function ===
 def human_readable_size(size_in_bytes):
@@ -450,6 +411,7 @@ def replace_header_and_collect(input_file_path, header_map, encoding):
     for i, line in enumerate(read_dat_file_smart(input_file_path, encoding)): # Use read_dat_file_smart
         if i == 0:
             headers = [strip_one_quote(h) for h in line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+            validate_headers(headers, os.path.basename(input_file_path))
             new_headers = [header_map.get(h, h) for h in headers]
         else:
             # Use parse_line for consistent parsing
@@ -489,6 +451,7 @@ def Merge_dats(merge_file, args):
             line_iter = read_dat_file_smart(path, encoding)
             header_line = next(line_iter)
             headers = [strip_one_quote(h) for h in header_line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+            validate_headers(headers, os.path.basename(path))
         except Exception as e:
             print(f"❌ Failed to read headers from {path}: {e}")
             excluded_files.append(path)
@@ -644,8 +607,120 @@ def select_fields_and_collect(input_file_path, selected_headers, encoding):
 
     return new_headers, rows
 
+# === Join DAT Files ===
+def join_dat_files(file1_path, file2_path, encoding1, encoding2, key_field_string):
+    key_fields = [k.strip() for k in key_field_string.strip().split()]
+    headers1, rows1 = read_headers_and_rows(file1_path, encoding1)
+    headers2, rows2 = read_headers_and_rows(file2_path, encoding2)
 
-    # === Utility Functions ===
+    # Validate key presence
+    for key in key_fields:
+        if key not in headers1 or key not in headers2:
+            print(f"❌ Key '{key}' not found in both files.")
+            sys.exit(2)
+
+    # Build lookup dictionaries
+    def build_lookup(rows, source):
+        key_map = {}
+        duplicates = set()
+        for row in rows:
+            key = tuple(row.get(k, "").strip() for k in key_fields)
+            if key in key_map:
+                duplicates.add(key)
+            key_map[key] = row
+        if duplicates:
+            print(f"❌ Duplicate key(s) found in {source}:")
+            for d in duplicates:
+                print(f"   - {d}")
+            sys.exit(2)
+        return key_map
+
+    lookup1 = build_lookup(rows1, "File1")
+    lookup2 = build_lookup(rows2, "File2")
+
+    keys1 = set(lookup1.keys())
+    keys2 = set(lookup2.keys())
+
+    if keys1 != keys2:
+        print("❌ Strict join failed: Key sets do not match exactly.")
+        sys.exit(2)
+
+    # Detect overlapping headers
+    overlapping_headers = set(headers1) & set(headers2) - set(key_fields)
+    if overlapping_headers:
+        print("⚠️ Detected duplicate field(s) in both files (excluding keys):")
+        for h in overlapping_headers:
+            print(f"   - {h}")
+
+        print("\nHow would you like to resolve these?")
+        print("  [1] Add suffix to file2 fields (e.g., 'Score_2')")
+        print("  [2] Keep file1 values only")
+        print("  [3] Overwrite with file2 values")
+        while True:
+            choice = input("Enter choice [1/2/3]: ").strip()
+            if choice in {"1", "2", "3"}:
+                break
+            print("Invalid choice. Please enter 1, 2, or 3.")
+        if choice == "1":
+            duplicate_mode = "suffix"
+        elif choice == "2":
+            duplicate_mode = "file1"
+        else:
+            duplicate_mode = "file2"
+    else:
+        duplicate_mode = "file1"  # default (won't matter since no overlaps)
+
+    # Apply user strategy
+    header_map2 = {}
+    if duplicate_mode == "suffix":
+        for h in headers2:
+            if h in key_fields:
+                header_map2[h] = h
+            elif h in overlapping_headers:
+                header_map2[h] = f"{h}_2"
+            else:
+                header_map2[h] = h
+    elif duplicate_mode == "file1":
+        for h in headers2:
+            if h not in headers1:
+                header_map2[h] = h
+    elif duplicate_mode == "file2":
+        for h in headers2:
+            header_map2[h] = h
+
+    # Final headers
+    if duplicate_mode == "suffix":
+        unified_headers = headers1 + [header_map2[h] for h in headers2 if h not in headers1 or h in overlapping_headers]
+    elif duplicate_mode == "file1":
+        unified_headers = headers1 + [h for h in headers2 if h not in headers1]
+    elif duplicate_mode == "file2":
+        unified_headers = headers1.copy()
+        for h in headers2:
+            if h not in key_fields and h not in unified_headers:
+                unified_headers.append(h)
+
+    # Merge rows
+    joined_rows = []
+    for key in sorted(keys1):
+        row1 = lookup1[key]
+        row2 = lookup2[key]
+        merged_row = row1.copy()
+
+        for h in headers2:
+            if h in key_fields:
+                continue
+            if duplicate_mode == "file1" and h in overlapping_headers:
+                continue
+            merged_name = header_map2.get(h, h)
+            merged_row[merged_name] = row2.get(h, "")
+
+        joined_rows.append(merged_row)
+
+    print(f"✅ Join successful on {len(joined_rows)} rows using strategy: {duplicate_mode}")
+    return unified_headers, joined_rows
+
+
+# === Utility Functions ===
 
 def file_has_valid_rows(file_path, headers, encoding):
     for i, line in enumerate(read_dat_file_smart(file_path, encoding)):
@@ -657,6 +732,95 @@ def file_has_valid_rows(file_path, headers, encoding):
             return False
     return True
 
+def validate_headers(headers, source="Input"):
+    """
+    Checks for duplicate headers and exits if any are found.
+    """
+    seen = set()
+    duplicates = set()
+    for h in headers:
+        if h in seen:
+            duplicates.add(h)
+        seen.add(h)
+    if duplicates:
+        print(f"❌ Duplicate header(s) found in {source}: {', '.join(duplicates)}")
+        sys.exit(2)
+
+# === Handler functions ===
+
+def handle_convert(args):
+    if not args.input_file:
+        print("❌ Please provide an input file for conversion.")
+        sys.exit(2)
+    Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
+    headers, rows = replace_header_and_collect(args.input_file, {}, Encode)
+    fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
+    suffix = "_converted"
+    output_path = get_output_path(args.input_file, suffix, "." + fmt, args.output_dir)
+    export_data(headers, rows, output_path, fmt=fmt, encoding=Encode)
+
+def handle_compare(args):
+    if not args.input_file or not args.input_file2:
+        print("❌ Please provide both input files for comparison.")
+        sys.exit(2)
+    mapping = load_mapping_file(args.mapping) if args.mapping else None
+    headers, diffs = compare_dat_files(args.input_file, args.input_file2, mapping)
+    if diffs:
+        fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
+        output_path = get_output_path(args.input_file, "_diff", "." + fmt, args.output_dir)
+        export_data(headers, diffs, output_path, fmt=fmt)
+    else:
+        print("No differences found during comparison.")
+
+def handle_replace_header(args):
+    if not args.input_file:
+        print("❌ Please provide an input file for header replacement.")
+        sys.exit(2)
+    Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
+    header_map = get_mapping_dict(args.replace_header)
+    new_headers, rows = replace_header_and_collect(args.input_file, header_map, Encode)
+    fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
+    output_path = get_output_path(args.input_file, "_Replaced", "." + fmt, args.output_dir)
+    export_data(new_headers, rows, output_path, fmt=fmt, encoding=Encode)
+
+def handle_delete(args):
+    if not args.input_file or not args.delete:
+        print("❌ Please provide both input file and delete file.")
+        sys.exit(2)
+    delete_rows(args.input_file, args.delete, args)
+
+def handle_select(args):
+    if not args.input_file or not args.select:
+        print("❌ Please provide both input file and select file.")
+        sys.exit(2)
+    Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
+    with open(args.select, encoding=detect_encoding(args.select, os.path.basename(args.select))) as f:
+        selected_headers = [line.strip() for line in f if line.strip()]
+    if not selected_headers:
+        print("❌ No headers selected.")
+        sys.exit(2)
+    new_headers, rows = select_fields_and_collect(args.input_file, selected_headers, Encode)
+    fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
+    output_path = get_output_path(args.input_file, "_selected", "." + fmt, args.output_dir)
+    export_data(new_headers, rows, output_path, fmt=fmt, encoding=Encode)
+
+def handle_join(args):
+    if not args.input_file or not args.input_file2:
+        print("❌ Please provide both input files for joining.")
+        sys.exit(2)
+    if not args.key:
+        print("❌ Please specify --key with one or more fields using --key \"FieldA FieldB\"")
+        sys.exit(2)
+
+    Encode1 = detect_encoding(args.input_file, os.path.basename(args.input_file))
+    Encode2 = detect_encoding(args.input_file2, os.path.basename(args.input_file2))
+
+    headers, joined_rows = join_dat_files(args.input_file, args.input_file2, Encode1, Encode2, args.key)
+    fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
+    output_path = get_output_path(args.input_file, "_joined", "." + fmt, args.output_dir)
+    export_data(headers, joined_rows, output_path, fmt=fmt, encoding=Encode1)
+
+
 # === Print Logo ===
 def print_logo():
     logo = r'''
@@ -665,6 +829,11 @@ def print_logo():
  / _// _ \(_-< _ `/ _ \
 /___/_//_/___|_,_/_//_/
     -----Author: Ehsan
+    Version: 3.0.0
+    Date: 2024-07-27
+    DAT File Converter Utility
+    GitHub: https://github.com/MdEhsanAhsan/CustomTextParser/tree/Cython_Version
+    -------------------------
     '''
     print(logo)
 # === Argument Parsing ===
@@ -680,8 +849,10 @@ def get_arguments():
     parser.add_argument("-m", "--mapping", metavar="MAPPING_FILE", help="Header mapping file for comparison")
     parser.add_argument("-r", "--replace-header", metavar="HEADER_MAPPING_FILE", help="Replace headers using a mapping file")
     parser.add_argument("-merge", action="store_true", help="Merge multiple DAT files into groups")
+    parser.add_argument("-join", action="store_true", help="Join two DAT files into a single file based on Key Field")
     parser.add_argument("-delete", nargs="?", metavar="DELETE_FILE", help="Delete rows based on field values")
-    parser.add_argument("-select", nargs="?", metavar="SELECT_FILE", help="Select rows based on field values")
+    parser.add_argument("-select", nargs="?", metavar="SELECT_FILE", help="Select Fields based on header values")
+    parser.add_argument("--key", metavar="KEY_FIELDS", help="Key field(s) for joining. e.g., --key \"User ID\"")
     parser.add_argument("-o", "--output-dir", metavar="DIR", help="Directory for output files")
 
     try:
@@ -697,110 +868,27 @@ def get_arguments():
 # === Main Execution ===
 
 if __name__ == '__main__':
-    
-    start_time = time.time()  # Start the timer
-    print_logo()  # Print the logo
+    print_logo()
+    start_time = time.time()
     args = get_arguments()
 
-    # Check if a primary operation is specified
-    # Auto-assign input_file to merge if merge flag is set but value is None
-    if args.merge is True and args.input_file:
+    if args.merge and args.input_file:
         args.merge = args.input_file
         args.input_file = None
         Merge_dats(args.merge, args)
     elif args.compare:
-        if not args.input_file2:
-            print("Error: You must provide a second DAT file for comparison.")
-        else:
-            if args.mapping:
-                map_dic = load_mapping_file(args.mapping)
-            else:
-                map_dic = None
-            headers, diffs = compare_dat_files(args.input_file, args.input_file2, map_dic)
-            if diffs: # Only export if there are differences
-                fmt = "dat"
-                if args.tsv:
-                    fmt = "tsv"
-                elif args.csv:
-                    fmt = "csv"
-                output_path = get_output_path(args.input_file, "_diff", "." + fmt, args.output_dir)
-                export_data(headers, diffs, output_path, fmt=fmt)
-            else:
-                print("No differences found during comparison.")
+        handle_compare(args)
     elif args.replace_header:
-        # Ensure input_file is provided for replace-header
-        if not args.input_file:
-            print("Error: An input file is required for --replace-header.")
-            sys.exit(2)
-        
-        input_file_path = args.input_file # Define input_file_path here
-        
-        # Detect input encoding
-        Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
-        header_map = get_mapping_dict(args.replace_header)
-        new_headers, rows = replace_header_and_collect(args.input_file, header_map, Encode)
-        
-        fmt = "dat"
-        if args.tsv:
-            fmt = "tsv"
-        elif args.csv:
-            fmt = "csv"
-        
-        # Determine output path
-        output_path = get_output_path(args.input_file, "_Replaced", "." + fmt, args.output_dir)
-        
-        export_data(new_headers, rows, output_path, fmt=fmt, encoding=Encode)
-
+        handle_replace_header(args)
     elif args.delete:
-        if not args.input_file:
-            print("❌ Please provide the input file along with --delete option.")
-        else:
-            delete_rows(args.input_file, args.delete, args)
-
+        handle_delete(args)
     elif args.select:
-        if not args.input_file:
-            print("❌ Please provide the input file along with --select option.")
-        else:
-            # Detect input encoding
-            Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
-            selected_headers = []
-            with open(args.select, encoding=detect_encoding(args.select, os.path.basename(args.select))) as f:
-                selected_headers = [line.strip() for line in f if line.strip()]
-            if not selected_headers:
-                print("❌ No headers selected in the selection file.")
-                sys.exit(2)
-            new_headers, rows = select_fields_and_collect(args.input_file, selected_headers, Encode)
-            fmt = "dat"
-            if args.tsv:
-                fmt = "tsv"
-            elif args.csv:
-                fmt = "csv"
-            output_path = get_output_path(args.input_file, "_selected", "." + fmt, args.output_dir)
-            export_data(new_headers, rows, output_path, fmt=fmt, encoding=Encode)
-    elif args.tsv or args.csv or args.dat:
-        if not args.input_file:
-            print("\n" + "=" * 60)
-            print("  ❌  Missing required arguments!\n")
-            print("  Please provide an input file for conversion.\n")
-            print("  For help, run:\n  python Main_Refactored.py --help")
-            print("=" * 60 + "\n")
-            sys.exit(2)
-        Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
-        headers, rows = replace_header_and_collect(args.input_file, {}, Encode)
-        fmt = "dat"
-        if args.tsv:
-            fmt = "tsv"
-        elif args.csv:
-            fmt = "csv"
-        output_path = get_output_path(args.input_file, "_converted", "." + fmt, args.output_dir)
-        export_data(headers, rows, output_path, fmt=fmt, encoding=Encode)
-    else: # No specific operation or input file provided
-        print("\n" + "=" * 60)
-        print("  ❌  Missing required arguments!\n")
-        print("  Please provide an input file or use the --merge option.\n")
-        print("  For help, run:\n  python Main_Refactored.py --help")
-        print("=" * 60 + "\n")
-    
-    end_time = time.time()  # End the timer
-    elapsed_time = end_time - start_time
-    print(f"Elapsed time: {elapsed_time:.2f} seconds")
+        handle_select(args)
+    elif args.join:
+        handle_join(args)
+    elif args.csv or args.tsv or args.dat:
+        handle_convert(args)
+    else:
+        print("❌ No valid operation provided. Run with --help to see options.")
+        sys.exit(2)
+    print(f"Elapsed time: {time.time() - start_time:.2f} seconds")

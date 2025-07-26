@@ -12,8 +12,10 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "F:\\Programming\\_testFiles\\Python\\Test_File.dat",
+                "F:\\Programming\\_testFiles\\Python\\TestFile_2.dat",
                 "--csv"
+                "-o",
+                "F:\\Programming\\_testFiles\\Python\\TestFile_test.csv"
             ]
         }
     ]
