@@ -19,7 +19,7 @@ QUOTE_CHAR = '\xfe'  # Quote character used to enclose fields.
 FIELD_SEP = '\x14'   # Field separator (DC4)
 LINE_ENDINGS = ('\n', '\r\n', '\r')
 MAX_MEMORY_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
-EXPORT_ENCODING = 'utf-16'
+EXPORT_ENCODING = 'utf-8-sig'
 
 # === Character Reader Class ===
 class CharReader:
@@ -373,9 +373,13 @@ def compare_dat_files(file1_path, file2_path, MAP=None):
         mapped_headers1 = headers1
         mapped_headers2 = headers2
 
-    # Prepare filenames
-    File1_Value = os.path.basename(file1_path)
-    File2_Value = os.path.basename(file2_path)
+    # Check if file names are the same
+    if os.path.basename(file1_path) == os.path.basename(file2_path):
+        File1_Value = file1_path  # Use full path for file 1
+        File2_Value = file2_path  # Use full path for file 2
+    else:
+        File1_Value = os.path.basename(file1_path)  # Use base name for file 1
+        File2_Value = os.path.basename(file2_path)  # Use base name for file 2
 
     # Compare row values
     diffs = []
@@ -402,24 +406,34 @@ def compare_dat_files(file1_path, file2_path, MAP=None):
     return fieldnames, diffs
 
 # === Replace Header ===
-def replace_header_and_collect(input_file_path, header_map, encoding):
+def replace_header_and_collect(input_file_path, header_map, encoding, is_compare=False):
     """
     Reads a DAT file, replaces headers using header_map, and returns new headers and rows.
+    Displays fields that were not renamed and unused mappings only if is_compare is True.
     """
     new_headers = []
     rows = []
-    for i, line in enumerate(read_dat_file_smart(input_file_path, encoding)): # Use read_dat_file_smart
+    unused_mappings = set(header_map.keys()) if header_map else set()  # Track unused mappings only if header_map exists
+
+    for i, line in enumerate(read_dat_file_smart(input_file_path, encoding)):
         if i == 0:
             headers = [strip_one_quote(h) for h in line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
             validate_headers(headers, os.path.basename(input_file_path))
-            new_headers = [header_map.get(h, h) for h in headers]
+            new_headers = [header_map.get(h, h) for h in headers] if header_map else headers
+
+            if header_map and is_compare:  # Only display warnings if is_compare is True
+                unused_mappings -= set(headers)  # Remove used mappings
+                not_renamed = [h for h in headers if h not in header_map]
+                if not_renamed:
+                    print(f"⚠️ The following fields were not renamed: {', '.join(not_renamed)}")
+                if unused_mappings:
+                    print(f"⚠️ The following mappings were unused: {', '.join(unused_mappings)}")
         else:
-            # Use parse_line for consistent parsing
-            parsed_row = parse_line(line, headers) # Pass original headers to parse_line
+            parsed_row = parse_line(line, headers)
             if parsed_row:
-                # Map the keys of the parsed_row to new_headers
                 mapped_row = {new_headers[idx]: value for idx, (header, value) in enumerate(parsed_row.items())}
                 rows.append(mapped_row)
+
     return new_headers, rows
 
 
@@ -778,7 +792,7 @@ def handle_replace_header(args):
         sys.exit(2)
     Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
     header_map = get_mapping_dict(args.replace_header)
-    new_headers, rows = replace_header_and_collect(args.input_file, header_map, Encode)
+    new_headers, rows = replace_header_and_collect(args.input_file, header_map, Encode,is_compare=args.compare)
     fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
     output_path = get_output_path(args.input_file, "_Replaced", "." + fmt, args.output_dir)
     export_data(new_headers, rows, output_path, fmt=fmt, encoding=Encode)
@@ -829,8 +843,8 @@ def print_logo():
  / _// _ \(_-< _ `/ _ \
 /___/_//_/___|_,_/_//_/
     -----Author: Ehsan
-    Version: 3.0.0
-    Date: 2024-07-27
+    Version: 3.0.1
+    Date: 2025-07-27
     DAT File Converter Utility
     GitHub: https://github.com/MdEhsanAhsan/CustomTextParser/tree/Cython_Version
     -------------------------
