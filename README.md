@@ -126,6 +126,9 @@ python Main.py input.dat --csv
 python Main.py input.dat --tsv
 # Output: input_converted.tsv
 ```
+## 🎥 Demo Example
+
+![Demo Animation](GIF/ToConvert.gif)
 
 You can also specify custom output paths:
 
