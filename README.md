@@ -127,8 +127,7 @@ python Main.py input.dat --tsv
 # Output: input_converted.tsv
 ```
 ## 🎥 Demo Example
-
-![Demo Animation](/GIF/ToConvert.gif)
+![Demo Animation](F:\Programming\Python\CustomTextParser\GIF\ToConvert.gif)
 
 You can also specify custom output paths:
 
