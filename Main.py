@@ -406,7 +406,7 @@ def compare_dat_files(file1_path, file2_path, MAP=None):
     return fieldnames, diffs
 
 # === Replace Header ===
-def replace_header_and_collect(input_file_path, header_map, encoding, is_compare=False):
+def replace_header_and_collect(input_file_path, header_map, encoding, is_replace=False):
     """
     Reads a DAT file, replaces headers using header_map, and returns new headers and rows.
     Displays fields that were not renamed and unused mappings only if is_compare is True.
@@ -421,7 +421,7 @@ def replace_header_and_collect(input_file_path, header_map, encoding, is_compare
             validate_headers(headers, os.path.basename(input_file_path))
             new_headers = [header_map.get(h, h) for h in headers] if header_map else headers
 
-            if header_map and is_compare:  # Only display warnings if is_compare is True
+            if header_map and is_replace:  # Only display warnings if is_compare is True
                 unused_mappings -= set(headers)  # Remove used mappings
                 not_renamed = [h for h in headers if h not in header_map]
                 if not_renamed:
@@ -792,7 +792,7 @@ def handle_replace_header(args):
         sys.exit(2)
     Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
     header_map = get_mapping_dict(args.replace_header)
-    new_headers, rows = replace_header_and_collect(args.input_file, header_map, Encode,is_compare=args.compare)
+    new_headers, rows = replace_header_and_collect(args.input_file, header_map, Encode,is_replace=args.replace_header)
     fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
     output_path = get_output_path(args.input_file, "_Replaced", "." + fmt, args.output_dir)
     export_data(new_headers, rows, output_path, fmt=fmt, encoding=Encode)
