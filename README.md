@@ -89,7 +89,7 @@ cd dat-file-tool
 
 ### ✨ Features
 
-- ✅ Convert `.dat` to `.csv` or keep as `.dat`
+- ✅ Convert `.dat` to `.csv` | `.csv` to `.dat` or keep as `.dat`
 - 🔀 Compare two `.dat` files (with optional header mapping)
 - 🧹 Delete specific rows from `.dat` using a value list
 - 🔁 Merge `.dat` files by common headers

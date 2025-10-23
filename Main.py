@@ -860,7 +860,7 @@ def print_logo():
  / _// _ \(_-< _ `/ _ \
 /___/_//_/___|_,_/_//_/
     -----Author: Ehsan
-    Version: 3.0.1
+    Version: 3.0.2
     Date: 2025-07-27
     DAT File Converter Utility
     GitHub: https://github.com/MdEhsanAhsan/CustomTextParser/tree/Cython_Version
