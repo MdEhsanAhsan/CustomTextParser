@@ -435,7 +435,20 @@ def replace_header_and_collect(input_file_path, header_map, encoding, is_replace
                 rows.append(mapped_row)
 
     return new_headers, rows
+# === SPECIAL FUNCTIONS FOR CSV TO DAT ===
 
+def read_csv(filepath, encoding):
+    """
+    Reads a CSV file and returns headers and rows as a list of dictionaries.
+    """
+    with open(filepath, newline='', encoding=encoding) as csvfile:
+        sample = csvfile.read(1024)
+        csvfile.seek(0)
+        dialect = csv.Sniffer().sniff(sample)
+        reader = csv.reader(csvfile, dialect)
+        headers = next(reader)  # Read the header row
+        rows = [dict(zip(headers, row)) for row in reader]  # Convert rows to dictionaries
+    return headers, rows
 
 # === Merge DAT Files ===
 def Merge_dats(merge_file, args):
@@ -767,7 +780,11 @@ def handle_convert(args):
         print("❌ Please provide an input file for conversion.")
         sys.exit(2)
     Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
-    headers, rows = replace_header_and_collect(args.input_file, {}, Encode)
+    ext =os.path.splitext(args.input_file)[1][1:]
+    if ext == 'csv':
+        headers, rows = read_csv(args.input_file, Encode)
+    else:
+        headers, rows = replace_header_and_collect(args.input_file, {}, Encode)
     fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
     suffix = "_converted"
     output_path = get_output_path(args.input_file, suffix, "." + fmt, args.output_dir)
