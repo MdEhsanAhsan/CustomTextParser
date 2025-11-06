@@ -14,7 +14,7 @@ A powerful Python CLI tool designed to handle complex `.DAT` files with custom d
 
 This tool can:
 
-* ✅ Convert `.DAT` to `.CSV`
+* ✅ Convert `.DAT` to `.CSV` to `.DAT`
 * 🔁 Compare two `.DAT` files (with optional field mapping)
 * 🧠 Replace or remap headers
 * 🔗 Merge multiple `.DAT` files intelligently
@@ -104,14 +104,14 @@ cd dat-file-tool
 | `--csv`       | Export DAT file to CSV format (Comma Separated Value) |
 | `--tsv`       | Export DAT file to TSV format (Tab Separated Value) |
 | `--dat`       | Export to DAT format (default if none specified) |
-| `-c`, `--compare` | Compare two DAT files line-by-line |
-| `-r`, `--replace-header` | Replace headers using a mapping file (`old_header,new_header`) |
+| `--c`, `--compare` | Compare two DAT files line-by-line |
+| `--r`, `--replace-header` | Replace headers using a mapping file (`old_header,new_header`) |
 | `--merge`     | Merge multiple DAT files grouped by matching headers |
 | `--delete`    | Delete rows based on field values listed in a file |
 | `--select`    | Export only selected fields from the DAT file |
-| `-join`       | Strictly join two DAT files using a key field, with duplicate header conflict resolution |
+| `--join`       | Strictly join two DAT files using a key field, with duplicate header conflict resolution |
 |`--key`        | Key field required to perform join |
-| `-o DIR`      | Specify output directory for generated files |
+| `--o`, `--output-dir`      | Specify output directory for generated files |
 
 ---
 
@@ -243,7 +243,7 @@ python Main.py file1.dat file2.dat -join --key ID
 
 | Flag         | Description |
 |--------------|-------------|
-| `-o DIR`     | Set output directory |
+| `--o DIR`     | Set output directory |
 | `--help`     | Show help message |
 
 ---

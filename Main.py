@@ -11,6 +11,7 @@ import hashlib
 import mmap
 import time
 import chardet
+import pandas as pd
 from Module.quote_split_chunked import QuoteLineSplitter  # Import the Cython module for optimized performance
 
 
@@ -57,24 +58,44 @@ class CharReader:
             return (None, None)
 
 # === Helper Functions ===
-def get_output_path(input_path, suffix="", ext=".dat", output_dir=None):
+def get_output_path(input_path, suffix="", ext=".dat", output_dir=None, filename=None):
     base_name = os.path.splitext(os.path.basename(input_path))[0]
     if ext == ".tsv":
         ext = ".csv"
-        filename = f"{base_name}{suffix}{ext}"
-    else:
-        filename = f"{base_name}{suffix}{ext}"
-    if output_dir and os.path.splitext(output_dir)[1]:
+    default_name = f"{base_name}{suffix}{ext}"
+
+    # Case 1: --filename is used
+    if filename:
+        user_ext = os.path.splitext(filename)[1].lower()
+        expected_ext = ext.lower()
+        if user_ext and user_ext != expected_ext:
+            print(f"⚠️ Output file extension '{user_ext}' does not match selected format '{expected_ext}'. Changing to '{expected_ext}'.")
+            filename = os.path.splitext(filename)[0] + expected_ext
+        elif not user_ext:
+            filename += expected_ext
+        return os.path.join(os.path.dirname(input_path), filename)
+
+    # Case 2: --output-dir is used
+    if output_dir:
+        # Normalize path
+        output_dir = os.path.normpath(output_dir)
         user_ext = os.path.splitext(output_dir)[1].lower()
         expected_ext = ext.lower()
-        if user_ext != expected_ext:
-            print(f"⚠️  Output file extension '{user_ext}' does not match selected format '{expected_ext}'. Changing to '{expected_ext}'.")
-            output_path = os.path.splitext(output_dir)[0] + expected_ext
-        else:
-            output_path = output_dir
-        return output_path
-    
-    return os.path.join(output_dir or os.path.dirname(input_path), filename)
+
+        # Case 2a: Full file path
+        if user_ext:
+            if user_ext != expected_ext:
+                print(f"⚠️ Output file extension '{user_ext}' does not match selected format '{expected_ext}'. Changing to '{expected_ext}'.")
+                output_path = os.path.splitext(output_dir)[0] + expected_ext
+            else:
+                output_path = output_dir
+            return output_path
+
+        # Case 2b: Directory path
+        return os.path.join(output_dir, default_name)
+
+    # Case 3: No output_dir or filename → default to input file's directory
+    return os.path.join(os.path.dirname(input_path), default_name)
 
 
 def detect_and_open(file_path, mode='r'):
@@ -113,7 +134,7 @@ def export_data(headers, rows, output_path, fmt="dat", encoding=EXPORT_ENCODING)
 
 
 # === Export Functions ===
-def export_to_tsv(headers, rows, output_path, encoding=EXPORT_ENCODING):
+def export_to_tsv(headers, rows, output_path, encoding):
     with open(output_path, 'w', newline='', encoding=encoding) as tsvfile:
         writer = csv.DictWriter(tsvfile, fieldnames=headers, delimiter='\t', quoting=csv.QUOTE_ALL)
         writer.writeheader()
@@ -121,7 +142,7 @@ def export_to_tsv(headers, rows, output_path, encoding=EXPORT_ENCODING):
     print(f"Exported {len(rows)} rows to {output_path}")
 
 
-def export_to_csv(headers, rows, output_path, encoding=EXPORT_ENCODING):
+def export_to_csv(headers, rows, output_path, encoding):
     find_encoding_errors(rows, headers, encoding=encoding)  # or 'ansi'
     with open(output_path, 'w', newline='', encoding=encoding) as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=headers, delimiter=',', quoting=csv.QUOTE_ALL)
@@ -130,7 +151,7 @@ def export_to_csv(headers, rows, output_path, encoding=EXPORT_ENCODING):
     print(f"Exported {len(rows)} rows to {output_path}")
 
 
-def export_to_dat(headers, rows, output_path, encoding=EXPORT_ENCODING):
+def export_to_dat(headers, rows, output_path, encoding):
     sep = QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR
     with open(output_path, 'w', encoding=encoding, newline='') as f:
         header_line = sep.join(headers)
@@ -390,19 +411,23 @@ def compare_dat_files(file1_path, file2_path, MAP=None):
         for h1, h2 in zip(mapped_headers1, mapped_headers2):
             v1 = r1.get(h1, "")
             v2 = r2.get(h2, "")
-            if v1 != v2:
+            v1hash = hashlib.sha256(v1.encode(encode1)).hexdigest()
+            v2hash = hashlib.sha256(v2.encode(encode2)).hexdigest()
+            if v1hash != v2hash:
                 diffs.append({
                     "Row": idx + 2,  # +2 accounts for header and 1-based indexing
                     "Field": h1 if h1 == h2 else f"{h1} ↔ {h2}",
                     File1_Value: v1,
-                    File2_Value: v2
+                    File2_Value: v2,
+                    "File_1_Hash": v1hash,
+                    "File_2_Hash": v2hash
                 })
 
     if not diffs:
         print("No differences found.")
         return None, None
 
-    fieldnames = ["Row", "Field", File1_Value, File2_Value]
+    fieldnames = ["Row", "Field", File1_Value, File2_Value,"File_1_Hash","File_2_Hash"]
     return fieldnames, diffs
 
 # === Replace Header ===
@@ -437,17 +462,32 @@ def replace_header_and_collect(input_file_path, header_map, encoding, is_replace
     return new_headers, rows
 # === SPECIAL FUNCTIONS FOR CSV TO DAT ===
 
+# def read_csv(filepath, encoding):
+#     """
+#     Reads a CSV file and returns headers and rows as a list of dictionaries.
+#     """
+#     with open(filepath, newline='', encoding=encoding) as csvfile:
+#         sample = csvfile.read(1024)
+#         csvfile.seek(0)
+#         dialect = csv.Sniffer().sniff(sample)
+#         reader = csv.reader(csvfile, dialect)
+#         headers = next(reader)  # Read the header row
+#         rows = [dict(zip(headers, row)) for row in reader]  # Convert rows to dictionaries
+#     return headers, rows
 def read_csv(filepath, encoding):
     """
-    Reads a CSV file and returns headers and rows as a list of dictionaries.
+    Reads a CSV file using pandas and returns headers and rows as a list of dictionaries.
+    Automatically handles various quoting and delimiter issues.
     """
-    with open(filepath, newline='', encoding=encoding) as csvfile:
-        sample = csvfile.read(1024)
-        csvfile.seek(0)
-        dialect = csv.Sniffer().sniff(sample)
-        reader = csv.reader(csvfile, dialect)
-        headers = next(reader)  # Read the header row
-        rows = [dict(zip(headers, row)) for row in reader]  # Convert rows to dictionaries
+    # read_csv auto-detects delimiters and quoting in most cases
+    df = pd.read_csv(filepath, encoding=encoding, engine='python', on_bad_lines='skip')
+
+    # Convert DataFrame to list of dicts
+    rows = df.to_dict(orient='records')
+
+    # Extract headers
+    headers = list(df.columns)
+
     return headers, rows
 
 # === Merge DAT Files ===
@@ -502,7 +542,7 @@ def Merge_dats(merge_file, args):
 
         grouped_files[header_hash].append((path, headers, rows))
         
-    m_EXPORT_ENCODING = 'utf-8-sig'  # Set default export encoding for merged files
+    #m_EXPORT_ENCODING = 'utf-8-sig'  # Set default export encoding for merged files
     output_dir = args.output_dir or os.path.dirname(merge_file)
 
     group_log = [] # List to keep track of merged groups and files
@@ -523,11 +563,11 @@ def Merge_dats(merge_file, args):
         # Create output path for merged group
         output_base = get_output_path(merge_file, f"_group_{idx}", "."+fmt, output_dir)
         print(f"✅ Merging group {idx} with {len(files_info)} files ({len(all_rows)} total rows)")
-        export_data(all_headers, all_rows, output_base, fmt=fmt, encoding=m_EXPORT_ENCODING)
+        export_data(all_headers, all_rows, output_base, fmt=fmt, encoding=EXPORT_ENCODING)
 
     # Write log CSV
     log_path = get_output_path(merge_file, "_merge_log", ".csv", output_dir)
-    export_data(["Group", "File", "RowCount"], group_log, log_path, fmt="csv", encoding="utf-8-sig")
+    export_data(["Group", "File", "RowCount"], group_log, log_path, fmt="csv", encoding=EXPORT_ENCODING)
     print(f"📝 Merge log written to {log_path}")
 
     if excluded_files:
@@ -787,7 +827,7 @@ def handle_convert(args):
         headers, rows = replace_header_and_collect(args.input_file, {}, Encode)
     fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
     suffix = "_converted"
-    output_path = get_output_path(args.input_file, suffix, "." + fmt, args.output_dir)
+    output_path = get_output_path(args.input_file, suffix, "." + fmt, args.output_dir, args.filename)
     export_data(headers, rows, output_path, fmt=fmt, encoding=Encode)
 
 def handle_compare(args):
@@ -798,7 +838,7 @@ def handle_compare(args):
     headers, diffs = compare_dat_files(args.input_file, args.input_file2, mapping)
     if diffs:
         fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
-        output_path = get_output_path(args.input_file, "_diff", "." + fmt, args.output_dir)
+        output_path = get_output_path(args.input_file, "_diff", "." + fmt, args.output_dir,args.filename)
         export_data(headers, diffs, output_path, fmt=fmt)
     else:
         print("No differences found during comparison.")
@@ -811,7 +851,7 @@ def handle_replace_header(args):
     header_map = get_mapping_dict(args.replace_header)
     new_headers, rows = replace_header_and_collect(args.input_file, header_map, Encode,is_replace=args.replace_header)
     fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
-    output_path = get_output_path(args.input_file, "_Replaced", "." + fmt, args.output_dir)
+    output_path = get_output_path(args.input_file, "_Replaced", "." + fmt, args.output_dir,args.filename)
     export_data(new_headers, rows, output_path, fmt=fmt, encoding=Encode)
 
 def handle_delete(args):
@@ -832,7 +872,7 @@ def handle_select(args):
         sys.exit(2)
     new_headers, rows = select_fields_and_collect(args.input_file, selected_headers, Encode)
     fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
-    output_path = get_output_path(args.input_file, "_selected", "." + fmt, args.output_dir)
+    output_path = get_output_path(args.input_file, "_selected", "." + fmt, args.output_dir,args.filename)
     export_data(new_headers, rows, output_path, fmt=fmt, encoding=Encode)
 
 def handle_join(args):
@@ -848,7 +888,7 @@ def handle_join(args):
 
     headers, joined_rows = join_dat_files(args.input_file, args.input_file2, Encode1, Encode2, args.key)
     fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
-    output_path = get_output_path(args.input_file, "_joined", "." + fmt, args.output_dir)
+    output_path = get_output_path(args.input_file, "_joined", "." + fmt, args.output_dir,args.filename)
     export_data(headers, joined_rows, output_path, fmt=fmt, encoding=Encode1)
 
 
@@ -860,7 +900,7 @@ def print_logo():
  / _// _ \(_-< _ `/ _ \
 /___/_//_/___|_,_/_//_/
     -----Author: Ehsan
-    Version: 3.0.2
+    Version: 3.0.3
     Date: 2025-07-27
     DAT File Converter Utility
     GitHub: https://github.com/MdEhsanAhsan/CustomTextParser/tree/Cython_Version
@@ -870,22 +910,39 @@ def print_logo():
 # === Argument Parsing ===
 
 def get_arguments():
-    parser = argparse.ArgumentParser(description="DAT File converter utility", formatter_class=argparse.RawTextHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="DAT File converter utility",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+
+    # 🔹 Positional Arguments
     parser.add_argument("input_file", nargs='?', help="Path to first input DAT file")
     parser.add_argument("input_file2", nargs="?", help="Path to second input DAT file (for compare)")
-    parser.add_argument("--csv", nargs="?", const=True, metavar="OUTPUT", help="Convert input to CSV(Comma Separated Vlaue)")
-    parser.add_argument("--tsv", nargs="?", const=True, metavar="OUTPUT", help="Export output as CSV(Tab Separated Vlaue)")
-    parser.add_argument("--dat", nargs="?", const=True, metavar="OUTPUT", help="Export output as DAT")
-    parser.add_argument("-c", "--compare", action="store_true", help="Compare two DAT files")
-    parser.add_argument("-m", "--mapping", metavar="MAPPING_FILE", help="Header mapping file for comparison")
-    parser.add_argument("-r", "--replace-header", metavar="HEADER_MAPPING_FILE", help="Replace headers using a mapping file")
-    parser.add_argument("-merge", action="store_true", help="Merge multiple DAT files into groups")
-    parser.add_argument("-join", action="store_true", help="Join two DAT files into a single file based on Key Field")
-    parser.add_argument("-delete", nargs="?", metavar="DELETE_FILE", help="Delete rows based on field values")
-    parser.add_argument("-select", nargs="?", metavar="SELECT_FILE", help="Select Fields based on header values")
-    parser.add_argument("--key", metavar="KEY_FIELDS", help="Key field(s) for joining. e.g., --key \"User ID\"")
-    parser.add_argument("-o", "--output-dir", metavar="DIR", help="Directory for output files")
 
+    # 🔸 Output Format Options
+    output_group = parser.add_argument_group("Output Format Options")
+    output_group.add_argument("--csv", action="store_true", help="Convert input to CSV (Comma Separated Value)")
+    output_group.add_argument("--tsv", action="store_true", help="Export output as TSV (Tab Separated Value)")
+    output_group.add_argument("--dat", action="store_true", help="Export output as DAT")
+
+    # 🔍 Comparison & Join Options
+    compare_group = parser.add_argument_group("Comparison and Join Options")
+    compare_group.add_argument("--compare", "--c", action="store_true", help="Compare two DAT files")
+    compare_group.add_argument("--mapping", "--m", metavar="MAPPING_FILE", help="Header mapping file for comparison")
+    compare_group.add_argument("--key", metavar="KEY_FIELDS", help="Key field(s) for joining. e.g., --key \"User ID\"")
+    compare_group.add_argument("--join", action="store_true", help="Join two DAT files into a single file based on Key Field")
+
+    # 🧩 Data Transformation Options
+    transform_group = parser.add_argument_group("Data Transformation Options")
+    transform_group.add_argument("--merge", action="store_true", help="Merge multiple DAT files into groups")
+    transform_group.add_argument("--delete", metavar="DELETE_FILE", help="Delete rows based on field values")
+    transform_group.add_argument("--select", metavar="SELECT_FILE", help="Select fields based on header values")
+    transform_group.add_argument("--replace-header", "--r", metavar="HEADER_MAPPING_FILE", help="Replace headers using a mapping file")
+
+    # 📁 Output Control
+    exclusive_output = output_group.add_mutually_exclusive_group() # Ensure only one of these can be used at a time
+    exclusive_output.add_argument("--filename", "--f", metavar="FileNames", help="Output file name pattern")
+    exclusive_output.add_argument("--output-dir", "--o", metavar="DIR", help="Directory for output files")
     try:
         return parser.parse_args()
     except SystemExit:
