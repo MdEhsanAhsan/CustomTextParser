@@ -474,20 +474,76 @@ def replace_header_and_collect(input_file_path, header_map, encoding, is_replace
 #         headers = next(reader)  # Read the header row
 #         rows = [dict(zip(headers, row)) for row in reader]  # Convert rows to dictionaries
 #     return headers, rows
-def read_csv(filepath, encoding):
+def read_csv(filepath, encoding, preserve_empty=True, fill_value=''):
     """
-    Reads a CSV file using pandas and returns headers and rows as a list of dictionaries.
-    Automatically handles various quoting and delimiter issues.
-    """
-    # read_csv auto-detects delimiters and quoting in most cases
-    df = pd.read_csv(filepath, encoding=encoding, engine='python', on_bad_lines='skip')
+    Reads a CSV file and returns headers and rows as a list of dictionaries.
 
-    # Convert DataFrame to list of dicts
+    Improvements over the previous implementation:
+    - Uses `sep=None` with `engine='python'` to auto-detect delimiters.
+    - Uses `keep_default_na=False` and `na_filter=False` to avoid
+      interpreting strings like 'N/A' or empty fields as pandas NA values.
+    - Reads all columns as `str` to preserve exact content.
+
+    Parameters:
+    - filepath: path to CSV file
+    - encoding: file encoding (string)
+    - preserve_empty: if True (default) keeps empty fields as empty strings;
+      if False, empty fields are replaced with `fill_value`.
+    - fill_value: the value to use when `preserve_empty=False` (default: '')
+    """
+    try:
+        # Preferred path: pandas with delimiter autodetection and no NA coercion
+        # Note: on_bad_lines='error' will raise a ParserError on malformed rows.
+        df = pd.read_csv(
+            filepath,
+            encoding=encoding,
+            engine='python',
+            sep=None,                 # auto-detect delimiter
+            on_bad_lines='error',
+            keep_default_na=False,    # don't treat 'N/A' / 'NA' as NA
+            na_filter=False,          # disable NA detection entirely
+            dtype=str,                # keep everything as string to preserve blanks
+            low_memory=False,
+        )
+    except pd.errors.ParserError as e:
+        print(f"❌ Malformed CSV detected in {filepath}: {e}")
+        print("Aborting due to malformed CSV lines. Fix the input or use a different file.")
+        sys.exit(2)
+    except Exception:
+        # Robust fallback: use csv.Sniffer and the csv module
+        with open(filepath, encoding=encoding, errors='replace') as f:
+            sample = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample)
+                reader = csv.reader(f, dialect)
+            except Exception:
+                f.seek(0)
+                reader = csv.reader(f)
+
+            try:
+                headers = next(reader)
+            except StopIteration:
+                return [], []
+            rows = []
+            for row_num, row in enumerate(reader, start=2):
+                if len(row) != len(headers):
+                    print(f"❌ Malformed CSV detected in {filepath} on row {row_num}: expected {len(headers)} fields, got {len(row)}")
+                    print("Aborting due to malformed CSV lines. Fix the input or use a different file.")
+                    sys.exit(2)
+                rows.append(dict(zip(headers, row)))
+            if not preserve_empty:
+                rows = [{k: (v if v != '' else fill_value) for k, v in r.items()} for r in rows]
+            return headers, rows
+
+    # Ensure blanks are preserved or replaced per caller preference
+    if preserve_empty:
+        df = df.fillna('')
+    else:
+        df = df.fillna(fill_value)
+
     rows = df.to_dict(orient='records')
-
-    # Extract headers
     headers = list(df.columns)
-
     return headers, rows
 
 # === Merge DAT Files ===
