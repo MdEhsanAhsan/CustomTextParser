@@ -137,105 +137,140 @@ python Main.py input.dat --csv output.csv
 
 ---
 
-### 🆚 Compare Two DAT Files
-
-```bash
-python Main.py file1.dat file2.dat -c
-```
-
-With optional header mapping:
-
-```bash
-python Main.py file1.dat file2.dat -c -m mapping.csv
-```
-
-Outputs differences to `value_diff.csv` (or `.dat`).
-
 ---
 
-### 🔄 Replace Headers Using Mapping File
+#### 2. **Compare Two Files**
 
-Create a mapping file (`mapping.csv`) like:
+Compare two DAT files and generate a detailed difference report:
 
-```csv
+```bash
+# Simple comparison
+python Main.py file1.dat file2.dat --compare
+
+# With header mapping (useful for comparing files with different headers)
+python Main.py file1.dat file2.dat --compare --mapping mapping.txt
+```
+
+**Mapping File Format** (`mapping.txt`):
+```
 OldHeader1,NewHeader1
 OldHeader2,NewHeader2
 ```
 
-Run:
-
-```bash
-python Main.py input.dat -r mapping.csv --csv
-# Output: input_Replaced.csv
-```
+**Output**: Creates `file1_diff.csv` containing all differences with SHA256 hashes for verification.
 
 ---
 
-### 📦 Merge Multiple DAT Files
+#### 3. **Replace Headers**
 
-Create a merge list file (`merge_list.csv`) containing one file path per line:
-
-```
-file1.dat
-file2.dat
-file3.dat
-```
-
-Then run:
+Replace or rename column headers using a mapping file:
 
 ```bash
-python Main.py --merge merge_list.csv
-# Outputs: merged_group_1.dat, merged_group_2.dat, etc.
+python Main.py data.dat --replace-header mapping.txt
 ```
 
-Also creates a log file: `merged_group_log.csv`.
+**Mapping File Format**:
+```
+OldName,NewName
+Age,PersonAge
+Score,TestScore
+```
+
+**Output**: Creates `data_Replaced.dat` with renamed headers.
 
 ---
 
-### 🗑️ Delete Rows Based on Field Value
+#### 4. **Select Specific Fields**
 
-Create a delete file (`delete.csv`) with the field name on the first line and values to delete below:
-
-```
-ID
-1001
-1003
-1007
-```
-
-Run:
+Extract only selected columns from a file:
 
 ```bash
-python Main.py input.dat --delete delete.csv --csv
-# Outputs: input{kept}.csv and input{removed}.csv
+python Main.py data.dat --select fields.txt
 ```
 
----
-
-### 🔍 Select Only Specific Fields
-
-Create a selection file (`select.txt`) with one header per line:
-
+**Select File Format** (`fields.txt`):
 ```
 Name
+Email
 Age
-City
 ```
 
-Run:
+**Output**: Creates `data_selected.dat` containing only the specified fields.
 
-```bash
-python Main.py input.dat --select select.txt --csv
-# Output: input_selected.csv
-```
 ---
 
-### 🔗 Strict Join of Two DAT Files
+#### 5. **Delete Rows**
 
-Join two DAT files based on one or more key fields, with strict validation:
+Remove rows matching specific field values:
 
 ```bash
-python Main.py file1.dat file2.dat -join --key ID
+python Main.py data.dat --delete delete_list.txt
+```
+
+**Delete File Format** (`delete_list.txt`):
+```
+Status
+Inactive
+Deleted
+Suspended
+```
+
+First line specifies the field, subsequent lines are values to delete.
+
+**Output**: 
+- Creates `data{kept}.dat` (rows to keep)
+- Creates `data{removed}.dat` (rows deleted)
+
+---
+
+#### 6. **Join Two Files**
+
+Perform a strict inner join on two DAT files based on key fields:
+
+```bash
+python Main.py file1.dat file2.dat --join --key "UserID"
+
+# Multiple key fields
+python Main.py file1.dat file2.dat --join --key "UserID Department"
+```
+
+**Features**:
+- Validates key field existence in both files
+- Detects and handles duplicate headers with three resolution modes:
+  1. **Suffix mode**: Adds `_2` to file2 column names
+  2. **File1 mode**: Keeps file1 values (default)
+  3. **File2 mode**: Overwrites with file2 values
+- Detects and reports duplicate keys with error handling
+
+**Output**: Creates `file1_joined.dat` containing merged data.
+
+---
+
+#### 7. **Merge Multiple Files**
+
+Merge multiple DAT files with automatic header validation:
+
+```bash
+python Main.py merge_list.txt --merge
+```
+
+**Merge List Format** (`merge_list.txt`):
+```
+/path/to/file1.dat
+/path/to/file2.dat
+/path/to/file3.dat
+```
+
+**Features**:
+- Groups files by header hash
+- Creates separate output files for each group
+- Generates merge log with file counts and row statistics
+- Validates file existence and readability
+- Excludes problematic files with detailed warnings
+
+**Output**: 
+- Creates `merge_list_group_1.dat`, `merge_list_group_2.dat`, etc.
+- Creates `merge_list_merge_log.csv` with merge statistics
 
 ---
 
@@ -274,7 +309,7 @@ Warns if any field exceeds Excel's max cell limit (32,767 chars).
 ## 📁 Requirements
 
 * Python 3.7+
-* No external libraries (uses standard library only)
+* Dependencies (see `requirements.txt`):
 
 ---
 
