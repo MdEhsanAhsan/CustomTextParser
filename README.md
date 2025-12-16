@@ -70,7 +70,7 @@ python setup.py build_ext --inplace
 * Comparing vendor-delivered load files
 
 ## 📦 Installation
-- 📥 [Download EXE](https://github.com/MdEhsanAhsan/CustomTextParser/releases/tag/v3.0.0)
+- 📥 [Download EXE](https://github.com/MdEhsanAhsan/CustomTextParser/releases/tag/v3.0.5)
 
 ### Clone the repo
 
