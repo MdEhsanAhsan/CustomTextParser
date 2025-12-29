@@ -906,6 +906,74 @@ def handle_join(args):
     output_path = get_output_path(args.input_file, "_joined", "." + fmt, args.output_dir,args.filename)
     export_data(headers, joined_rows, output_path, fmt=fmt, encoding=Encode1)
 
+def handle_reorder_header(args):
+    if not args.input_file:
+        print("❌ Please provide an input file for header reordering.")
+        sys.exit(2)
+    Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
+
+    if not args.reorder_header:
+        print("❌ Please provide a header order file using --reorder-header.")
+        sys.exit(2)
+
+    order_file = args.reorder_header
+    order_enc = detect_encoding(order_file, os.path.basename(order_file))
+
+    # Read desired header order from the provided file
+    try:
+        with open(order_file, encoding=order_enc) as f:
+            desired_order = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        print(f"❌ Header order file not found: {order_file}")
+        sys.exit(2)
+
+    if not desired_order:
+        print("❌ Header order file is empty.")
+        sys.exit(2)
+
+    if len(set(desired_order)) != len(desired_order):
+        print("❌ Duplicate header names found in the header order file. Please remove duplicates.")
+        sys.exit(2)
+
+    # Read input file headers and validate
+    line_iter = read_dat_file_smart(args.input_file, Encode)
+    try:
+        header_line = next(line_iter)
+    except StopIteration:
+        print(f"❌ Input file appears to be empty: {args.input_file}")
+        sys.exit(2)
+
+    headers = [strip_one_quote(h) for h in header_line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+    validate_headers(headers, os.path.basename(args.input_file))
+
+    # Check file row integrity
+    if not file_has_valid_rows(args.input_file, headers, Encode):
+        print("❌ Input file has invalid rows. Aborting reorder operation.")
+        return
+
+    # Compute new header order: include requested headers (if present) first, append any remaining headers
+    missing_in_input = [h for h in desired_order if h not in headers]
+    if missing_in_input:
+        print(f"⚠️ The following headers from the order file were not found in the input file and will be ignored: {', '.join(missing_in_input)}")
+
+    new_headers = [h for h in desired_order if h in headers]
+    remaining = [h for h in headers if h not in new_headers]
+    new_headers.extend(remaining)
+
+    # Collect rows in the new order
+    rows = []
+    for i, line in enumerate(read_dat_file_smart(args.input_file, Encode)):
+        if i == 0:
+            continue
+        parsed = parse_line(line, headers)
+        if parsed:
+            ordered_row = {h: parsed.get(h, "") for h in new_headers}
+            rows.append(ordered_row)
+
+    fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
+    output_path = get_output_path(args.input_file, "_reordered", "." + fmt, args.output_dir, args.filename)
+    export_data(new_headers, rows, output_path, fmt=fmt, encoding=Encode)
+    print(f"✅ Header reorder completed. Output written to {output_path}")
 
 # === Print Logo ===
 def print_logo():
@@ -953,6 +1021,7 @@ def get_arguments():
     transform_group.add_argument("--delete", metavar="DELETE_FILE", help="Delete rows based on field values")
     transform_group.add_argument("--select", metavar="SELECT_FILE", help="Select fields based on header values")
     transform_group.add_argument("--replace-header", "--r", metavar="HEADER_MAPPING_FILE", help="Replace headers using a mapping file")
+    transform_group.add_argument("--reorder-header", "--reorder", metavar="HEADER_ORDER_FILE", help="Reorder headers based on a specified order file")  
 
     # 📁 Output Control
     exclusive_output = output_group.add_mutually_exclusive_group() # Ensure only one of these can be used at a time
@@ -989,6 +1058,8 @@ if __name__ == '__main__':
         handle_select(args)
     elif args.join:
         handle_join(args)
+    elif args.reorder_header:
+        handle_reorder_header(args)
     elif args.csv or args.tsv or args.dat:
         handle_convert(args)
     else:
