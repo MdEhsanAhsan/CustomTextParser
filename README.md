@@ -99,19 +99,20 @@ cd dat-file-tool
 - ⚠️ Excel field-length warning for long text fields (>32,767 chars)
 - 🎯 Select only specific fields from a DAT file using `--select`
 
-| Feature       | Description |
-|---------------|-------------|
-| `--csv`       | Export DAT file to CSV format (Comma Separated Value) |
-| `--tsv`       | Export DAT file to TSV format (Tab Separated Value) |
-| `--dat`       | Export to DAT format (default if none specified) |
-| `--c`, `--compare` | Compare two DAT files line-by-line |
-| `--r`, `--replace-header` | Replace headers using a mapping file (`old_header,new_header`) |
-| `--merge`     | Merge multiple DAT files grouped by matching headers |
-| `--delete`    | Delete rows based on field values listed in a file |
-| `--select`    | Export only selected fields from the DAT file |
-| `--join`       | Strictly join two DAT files using a key field, with duplicate header conflict resolution |
-|`--key`        | Key field required to perform join |
-| `--o`, `--output-dir`      | Specify output directory for generated files |
+| Feature                               |             Description                               |
+|---------------------------------------|-------------------------------------------------------|
+| `--csv`                               | Export DAT file to CSV format (Comma Separated Value) |
+| `--tsv`                               | Export DAT file to TSV format (Tab Separated Value) |
+| `--dat`                               | Export to DAT format (default if none specified) |
+| `--c`, `--compare`                    | Compare two DAT files line-by-line |
+| `--r`, `--replace-header`             | Replace headers using a mapping file (`old_header,new_header`) |
+| `--merge`                             | Merge multiple DAT files grouped by matching headers |
+| `--delete`                            | Delete rows based on field values listed in a file |
+| `--select`                            | Export only selected fields from the DAT file |
+| `--join`                              | Strictly join two DAT files using a key field, with duplicate header conflict resolution |
+|`--key`                                | Key field required to perform join |
+| `--o`, `--output-dir`                 | Specify output directory for generated files |
+| `--reorder-header`, `--reorder`       | Reorder headers based on a specified order file |
 
 ---
 
