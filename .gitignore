@@ -5,3 +5,5 @@ dist/
 # Python Environment
 build/
 .vscode/
+__pycache__/
+tests/

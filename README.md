@@ -113,6 +113,9 @@ cd dat-file-tool
 |`--key`                                | Key field required to perform join |
 | `--o`, `--output-dir`                 | Specify output directory for generated files |
 | `--reorder-header`, `--reorder`       | Reorder headers based on a specified order file |
+|`--split`                              |Split converted output into N files (even split)|
+|`--max-rows`                           |Maximum rows per output file (e.g., 10000).|
+|`--group-by`                           |Keep groups (by FIELD) intact when splitting|
 
 ---
 
@@ -127,6 +130,27 @@ python Main.py input.dat --csv
 python Main.py input.dat --tsv
 # Output: input_converted.tsv
 ```
+
+### ✂️ Split Output into Multiple Files ✅
+
+Split the converted output into multiple files either by number of files or by maximum rows per file. Use `--group-by` to keep related rows (families) intact.
+
+```bash
+# 1) Evenly split into 3 files
+python Main.py input.dat --csv --split 3
+# Output: input_part1.csv, input_part2.csv, input_part3.csv
+
+# 2) Split into files containing up to 10,000 rows each
+python Main.py input.dat --csv --max-rows 10000
+# Output: input_part1.csv, input_part2.csv, ... (each up to 10000 rows)
+
+# 3) Keep families intact while splitting into 3 files (group by 'Family' header)
+python Main.py input.dat --csv --split 3 --group-by Family
+# Output: each file contains whole families — no family is split across files
+
+# Note: If a single family's row count exceeds the requested --max-rows, that family will be placed alone in a file with a warning.
+```
+
 ## 🎥 Demo Example
 ![Demo Animation](GIF/ToConvert.gif)
 

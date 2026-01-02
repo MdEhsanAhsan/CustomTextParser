@@ -331,6 +331,109 @@ def parse_line(line, headers):
     return row
 
 
+# === Splitting Utilities ===
+
+def split_rows_evenly(rows, n_splits):
+    """Split a list of rows into n_splits parts as evenly as possible.
+    Returns a list of lists.
+    """
+    if n_splits <= 0:
+        raise ValueError("n_splits must be >= 1")
+    print(f"Splitting {len(rows)} rows into {n_splits} parts evenly.")
+    print("-----")
+    total = len(rows)
+    remainder = total % n_splits
+    effective_total = total - remainder
+
+    base = effective_total // n_splits
+    parts = []
+
+    idx = 0
+    for i in range(n_splits):
+        size = base
+        # add remainder only to the LAST split
+        if i == n_splits - 1:
+            size += remainder
+
+        parts.append(rows[idx:idx + size])
+        idx += size
+
+    return parts
+
+
+
+def chunk_rows(rows, chunk_size):
+    """Yield successive chunks of size chunk_size from rows."""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be >= 1")
+    print(f"Splitting {len(rows)} rows into {chunk_size} rows in each file.")
+    print("-----")
+    for i in range(0, len(rows), chunk_size):
+        yield rows[i:i+chunk_size]
+
+
+def split_rows_grouped(rows, group_field, n_splits=None, max_rows=None):
+    """Split rows while keeping groups (by group_field) intact.
+
+    If n_splits is provided, will distribute groups to balance total row counts across n_splits buckets.
+    If max_rows is provided, will create buckets until each bucket has approx <= max_rows (groups are never split).
+    If a single group's size > max_rows, the group will be placed alone in a bucket and a warning printed.
+    """
+    if not group_field:
+        raise ValueError("group_field is required for grouped splitting")
+    print(f"Splitting {len(rows)} rows into {max_rows} in each file.")
+    print("-----")
+    # Build groups
+    groups = {}
+    for r in rows:
+        key = r.get(group_field)
+        groups.setdefault(key, []).append(r)
+
+    group_items = [(k, len(v), v) for k, v in groups.items()]
+
+    # If n_splits mode: use greedy balance (place largest groups first into smallest bucket)
+    if n_splits is not None:
+        if n_splits <= 0:
+            raise ValueError("n_splits must be >= 1")
+        # initialize buckets: list of (size, list)
+        buckets = [(0, []) for _ in range(n_splits)]
+        # sort groups by descending size
+        group_items.sort(key=lambda x: x[1], reverse=True)
+        for _, size, grp in group_items:
+            # pick bucket with min size
+            min_idx = min(range(len(buckets)), key=lambda i: buckets[i][0])
+            buckets[min_idx][1].extend(grp)
+            buckets[min_idx] = (buckets[min_idx][0] + size, buckets[min_idx][1])
+        return [b[1] for b in buckets]
+
+    # If max_rows mode: fill sequential buckets until max reached, start new bucket
+    if max_rows is not None:
+        if max_rows <= 0:
+            raise ValueError("max_rows must be >= 1")
+
+        buckets = []
+        current_bucket = []
+        current_size = 0
+        # iterate groups in any stable order
+        for _, size, grp in sorted(group_items, key=lambda x: x[1], reverse=True):
+            if size > max_rows and current_size == 0:
+                # group alone will exceed max_rows; place alone with a warning
+                print(f"⚠️ Group of size {size} exceeds max_rows {max_rows}; group placed alone in its own file.")
+                buckets.append(list(grp))
+                continue
+            if current_size + size > max_rows and current_bucket:
+                buckets.append(current_bucket)
+                current_bucket = []
+                current_size = 0
+            current_bucket.extend(grp)
+            current_size += size
+        if current_bucket:
+            buckets.append(current_bucket)
+        return buckets
+
+    # If neither n_splits nor max_rows provided, just return single group of all rows
+    return [rows]
+
 
 # === Mapping Header Function ===
 
@@ -456,8 +559,10 @@ def replace_header_and_collect(input_file_path, header_map, encoding, is_replace
                 not_renamed = [h for h in headers if h not in header_map]
                 if not_renamed:
                     print(f"⚠️ The following fields were not renamed: {', '.join(not_renamed)}")
+                    print("\n===================================================================")
                 if unused_mappings:
                     print(f"⚠️ The following mappings were unused: {', '.join(unused_mappings)}")
+                    print("\n===================================================================")
         else:
             parsed_row = parse_line(line, headers)
             if parsed_row:
@@ -835,15 +940,36 @@ def handle_convert(args):
         print("❌ Please provide an input file for conversion.")
         sys.exit(2)
     Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
-    ext =os.path.splitext(args.input_file)[1][1:]
+    ext = os.path.splitext(args.input_file)[1][1:]
     if ext == 'csv':
         headers, rows = read_csv(args.input_file, Encode)
     else:
         headers, rows = replace_header_and_collect(args.input_file, {}, Encode)
+
     fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
-    suffix = "_converted"
-    output_path = get_output_path(args.input_file, suffix, "." + fmt, args.output_dir, args.filename)
-    export_data(headers, rows, output_path, fmt=fmt, encoding=Encode)
+
+    # Splitting behavior
+    if args.split or args.max_rows:
+        # Decide split parts
+        if args.group_by:
+            parts = split_rows_grouped(rows, args.group_by, n_splits=args.split, max_rows=args.max_rows)
+        else:
+            if args.split:
+                parts = split_rows_evenly(rows, args.split)
+            else:
+                parts = list(chunk_rows(rows, args.max_rows))
+
+        # Export each part
+        for i, part in enumerate(parts, start=1):
+            suffix = f"_part{i}"
+            output_path = get_output_path(args.input_file, suffix, "." + fmt, args.output_dir, args.filename)
+            export_data(headers, part, output_path, fmt=fmt, encoding=Encode)
+        print(f"✅ Split into {len(parts)} files completed.")
+    else:
+        # Single-file export (original behavior)
+        suffix = "_converted"
+        output_path = get_output_path(args.input_file, suffix, "." + fmt, args.output_dir, args.filename)
+        export_data(headers, rows, output_path, fmt=fmt, encoding=Encode)
 
 def handle_compare(args):
     if not args.input_file or not args.input_file2:
@@ -983,7 +1109,7 @@ def print_logo():
  / _// _ \(_-< _ `/ _ \
 /___/_//_/___|_,_/_//_/
     -----Author: Ehsan
-    Version: 3.0.5
+    Version: 3.2.0
     Date: 2025-07-27
     DAT File Converter Utility
     GitHub: https://github.com/MdEhsanAhsan/CustomTextParser/tree/Cython_Version
@@ -1021,7 +1147,13 @@ def get_arguments():
     transform_group.add_argument("--delete", metavar="DELETE_FILE", help="Delete rows based on field values")
     transform_group.add_argument("--select", metavar="SELECT_FILE", help="Select fields based on header values")
     transform_group.add_argument("--replace-header", "--r", metavar="HEADER_MAPPING_FILE", help="Replace headers using a mapping file")
-    transform_group.add_argument("--reorder-header", "--reorder", metavar="HEADER_ORDER_FILE", help="Reorder headers based on a specified order file")  
+    transform_group.add_argument("--reorder-header", "--reorder", metavar="HEADER_ORDER_FILE", help="Reorder headers based on a specified order file")
+
+    # 🔸 Splitting Options
+    split_group = parser.add_mutually_exclusive_group()
+    split_group.add_argument("--split", type=int, metavar="N", help="Split converted output into N files (even split)")
+    split_group.add_argument("--max-rows", type=int, metavar="N", help="Maximum rows per output file (e.g., 10000).")
+    transform_group.add_argument("--group-by", metavar="FIELD", help="Keep groups (by FIELD) intact when splitting")  
 
     # 📁 Output Control
     exclusive_output = output_group.add_mutually_exclusive_group() # Ensure only one of these can be used at a time
