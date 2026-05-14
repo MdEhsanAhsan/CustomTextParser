@@ -30,11 +30,12 @@ This tool can:
 This tool now uses **Cython-compiled quote-aware parsing** for maximum speed on large `.DAT` files.
 
 ### 🚀 Performance Gain
-| File Size   | Rows      | Before (Pure Python) | Now (Cython) |
-|-------------|-----------|----------------------|---------------|
-| 131 MB      | ~90k      | ~17 sec              | **3.45 sec**  |
-| 204 MB      | ~1.1M     | ~52 sec              | **13.56 sec** |
-| 1.06 GB     | ~5.7M     | ~300 sec             | **64.39 sec** |
+| File Size   | Rows      | Before (Pure Python) | v3.2.0 (Cython str) | v3.4.0 (Optimized) |
+|-------------|-----------|----------------------|-----------------------|--------------------|
+| 131 MB      | ~90k      | ~17 sec              | **3.45 sec**          | **~2.5 sec**       |
+| 204 MB      | ~1.1M     | ~52 sec              | **13.56 sec**         | **~9 sec**         |
+| 1.06 GB     | ~5.7M     | ~300 sec             | **64.39 sec**         | **~23 sec**        |
+
 
 > ✅ Quote-safe, newline-tolerant, and 4–5× faster than the previous version.
 
@@ -330,7 +331,52 @@ Handles common encodings reliably:
 Warns if any field exceeds Excel's max cell limit (32,767 chars).
 
 ---
+## Error Handling
 
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Field count mismatch` | Row has different number of fields than header | Check source data for malformed lines |
+| `Duplicate header(s)` | Same header name appears twice | Fix source file or use `--replace-header` |
+| `Key not found` | Join key doesn't exist in one file | Verify field names match exactly |
+| `Duplicate key` | Same key value appears multiple times | Ensure keys are unique per file |
+| `Encoding error` | Character cannot be encoded in target encoding | Use `--dat` output or fix source encoding |
+| `Low confidence` | chardet unsure of encoding | Manually convert file to UTF-8 BOM |
+
+---
+
+## Examples Summary
+
+```bash
+# === CONVERSION ===
+python Main.py data.dat --csv                          # DAT to CSV
+python Main.py data.csv --dat                          # CSV to DAT
+python Main.py data.dat --tsv                          # DAT to TSV
+
+# === OUTPUT CONTROL ===
+python Main.py data.dat --csv --filename out.csv       # Custom name
+python Main.py data.dat --csv --output-dir ./out/      # Custom directory
+
+# === SPLITTING ===
+python Main.py data.dat --csv --split 4                # 4 files
+python Main.py data.dat --csv --max-rows 10000         # 10K rows each
+python Main.py data.dat --csv --max-rows 5000 --group-by "Dept"
+
+# === TRANSFORMS ===
+python Main.py data.dat --replace-header map.txt --csv
+python Main.py data.dat --reorder-header order.txt --csv
+python Main.py data.dat --select fields.txt --csv
+python Main.py data.dat --delete delete.txt --csv
+
+# === COMPARE & JOIN ===
+python Main.py a.dat b.dat --compare --csv
+python Main.py a.dat b.dat --compare --mapping map.txt --csv
+python Main.py a.dat b.dat --join --key "ID" --csv
+python Main.py a.dat b.dat --join --key "User ID,First Name" --csv
+
+# === MERGE ===
+python Main.py files.txt --merge --csv
+```
+---
 ## 📁 Requirements
 
 * Python 3.7+
