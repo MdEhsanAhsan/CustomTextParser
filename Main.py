@@ -17,9 +17,13 @@ from Module.quote_split_chunked import QuoteLineSplitter  # Import the Cython mo
 # === Global Constants ===
 QUOTE_CHAR = '\xfe'  # Quote character used to enclose fields.
 FIELD_SEP = '\x14'   # Field separator (DC4)
+SEPARATOR = QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR  # Pre-computed separator (optimization)
 LINE_ENDINGS = ('\n', '\r\n', '\r')
-MAX_MEMORY_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
+MAX_MEMORY_FILE_SIZE = 500 * 1024 * 1024  # 500 MB (kept for compatibility, but reader always streams now)
 EXPORT_ENCODING = 'utf-8-sig'
+
+# === Encoding Cache (optimization) ===
+_encoding_cache = {}
 
 # === Character Reader Class ===
 class CharReader:
@@ -60,7 +64,7 @@ class CharReader:
 def get_output_path(input_path, suffix="", ext=".dat", output_dir=None, filename=None):
     base_name = os.path.splitext(os.path.basename(input_path))[0]
     if ext == ".tsv":
-        ext = ".csv"
+        ext = ".csv"  # Use .csv extension for TSV format to trigger Excel warnings
     default_name = f"{base_name}{suffix}{ext}"
 
     # Case 1: --filename is used
@@ -111,7 +115,7 @@ def read_headers_and_rows(file_path, encoding=None):
     rows = []
     for i, line in enumerate(read_dat_file_smart(file_path, encoding=encoding)):
         if i == 0:
-            headers = [strip_one_quote(h) for h in line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+            headers = [strip_one_quote(h) for h in line.split(SEPARATOR)]
             validate_headers(headers, os.path.basename(file_path))
         else:
             parsed = parse_line(line, headers)
@@ -132,7 +136,7 @@ def export_data(headers, rows, output_path, fmt="dat", encoding=EXPORT_ENCODING)
         export_to_dat(headers, rows, output_path, encoding=encoding)
 
 
-# === Export Functions ===
+# === Export Functions (Legacy - used by merge/join/compare/split paths) ===
 def export_to_tsv(headers, rows, output_path, encoding):
     with open(output_path, 'w', newline='', encoding=encoding) as tsvfile:
         writer = csv.DictWriter(tsvfile, fieldnames=headers, delimiter='\t', quoting=csv.QUOTE_ALL)
@@ -162,7 +166,7 @@ def export_to_dat(headers, rows, output_path, encoding):
     print(f"Exported {len(rows)} rows to {output_path}")
 
 
-# === Excel Warnings ===
+# === Excel Warnings (Legacy path) ===
 def excel_warning(headers, rows, warn_limit=32767, max_warnings=20):
     """
     Collects warnings for Excel cell length and prints a compact table.
@@ -180,7 +184,7 @@ def excel_warning(headers, rows, warn_limit=32767, max_warnings=20):
 
     if warnings:
         print("════════════════════════════════════════════════════════════════════════════════════════════════════════")
-        print(f"{'FieldName':<15}{'RowNo.':<10}{'CurrentLength':<15}")
+        print(f"{'FieldName':<<15}{'RowNo.':<<10}{'CurrentLength':<<15}")
         for h, row_idx, length in warnings:
             print(f"{h:<15}{row_idx:<10}{length:<15}")
         if len(warnings) == max_warnings:
@@ -206,93 +210,83 @@ def get_mapping_dict(mapping_file):
     return load_mapping_file(mapping_file)
 
 
-# === Encoding Detection ===
+# === Encoding Detection (with cache) ===
 def detect_encoding(file_path, fname):
     """
-
-    Detects the file encoding by reading a larger sample (4KB) and applying several heuristics.
-
+    Detects file encoding with caching to avoid redundant disk reads.
     Returns the detected encoding as a string or 'Error' if detection fails.
-
     """
+    # Check cache first (optimization)
+    if file_path in _encoding_cache:
+        return _encoding_cache[file_path]
 
     try:
-
         with open(file_path, 'rb') as file:
-            size_chunk = 1 * 1024 * 1024  # 1 MB chunk size for large files
-            raw = file.read(size_chunk)  # Read first 1MB for better analysis
+            size_chunk = 64 * 1024  # 64 KB chunk size — plenty for chardet
+            raw = file.read(size_chunk)
 
             # Check for BOM signatures first.
-
             if raw.startswith(b'\xEF\xBB\xBF'):
-
+                result = 'utf-8-sig'
                 print(f"{fname} is detected as UTF-8 BOM")
-
-                return 'utf-8-sig'
-
             elif raw.startswith(b'\xFF\xFE'):
-
+                result = 'utf-16'
                 print(f"{fname} is detected as UTF-16 LE BOM")
-
-                return 'utf-16'
-
             elif raw.startswith(b'\xFE\xFF'):
-
+                result = 'utf-16'
                 print(f"{fname} is detected as UTF-16 BE BOM")
-
-                return 'utf-16'
             elif raw.startswith(b'\xc3\xbe'):
+                result = 'utf-8'
                 print(f"{fname} is detected as UTF-8")
-                return 'utf-8'
-            try:
-                
-                enc = chardet.detect(raw)
-                print(f"{fname} is detected as {enc['encoding']} (confidence: {enc['confidence']:.2%})")
-                if enc['encoding'] is None or enc['confidence'] < 0.5:
-                    print(f"Warning: Low confidence in encoding detection for {fname}. Defaulting to 'utf-8'.\nIf you encounter issues, consider manually change the encoding of file to UTF-8 BOM.")
-                    return 'utf-8'
-                return enc['encoding']
-            except Exception as e:
-                print(f"Error detecting encoding for {fname}: {e}")
-                return 'Error'
+            else:
+                try:
+                    enc = chardet.detect(raw)
+                    print(f"{fname} is detected as {enc['encoding']} (confidence: {enc['confidence']:.2%})")
+                    if enc['encoding'] is None or enc['confidence'] < 0.5:
+                        print(f"Warning: Low confidence in encoding detection for {fname}. Defaulting to 'utf-8'.\nIf you encounter issues, consider manually change the encoding of file to UTF-8 BOM.")
+                        result = 'utf-8'
+                    else:
+                        result = enc['encoding']
+                except Exception as e:
+                    print(f"Error detecting encoding for {fname}: {e}")
+                    result = 'Error'
+            
+            # Cache the result
+            _encoding_cache[file_path] = result
+            return result
 
     except FileNotFoundError:
-
         print(f"File not found: {file_path}")
-
+        _encoding_cache[file_path] = 'No File'
         return 'No File'
 
 # === Line Reader & Parser ===
 
 def read_dat_file_smart(file_path, encoding):
+    """
+    ALWAYS streams via mmap + incremental decoder.
+    Never loads the entire file into a Python string, regardless of file size.
+    """
     file_size = os.path.getsize(file_path)
-    chunk_size = 2 * 1024 * 1024 # 2 MB chunk size for large files
+    chunk_size = 2 * 1024 * 1024  # 2 MB chunk size
 
-    if file_size <= MAX_MEMORY_FILE_SIZE:
-        with open(file_path, 'r', encoding=encoding, errors='replace', newline='') as f:
-            content = f.read()
-            # yield from _process_content(content)
-        splitter = QuoteLineSplitter()
-        for line in splitter.feed_chunk(content) + splitter.flush():
-            yield line
-    else:
-        decoder = codecs.getincrementaldecoder(encoding)(errors='replace')
-        splitter = QuoteLineSplitter()
+    decoder = codecs.getincrementaldecoder(encoding)(errors='replace')
+    splitter = QuoteLineSplitter()
 
-        with open(file_path, 'rb') as f:
-            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                pos = 0
-                while pos < file_size:
-                    end = min(pos + chunk_size, file_size)
-                    chunk = mm[pos:end]
-                    pos = end
+    with open(file_path, 'rb') as f:
+        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            pos = 0
+            while pos < file_size:
+                end = min(pos + chunk_size, file_size)
+                chunk = mm[pos:end]
+                pos = end
 
-                    decoded = decoder.decode(chunk)
-                    for line in splitter.feed_chunk(decoded):
-                        yield line
-
-                for line in splitter.flush():
+                decoded = decoder.decode(chunk)
+                for line in splitter.feed_chunk(decoded):
                     yield line
+
+            for line in splitter.flush():
+                yield line
     print(f"-----\nFileSize:{human_readable_size(file_size)}\n-----")
 
 # === Human Readable Size Function ===
@@ -322,7 +316,7 @@ def parse_line(line, headers):
     Parses a line from the DAT file, splitting it into fields.
     Returns a dict mapping headers to values, or None if field count mismatch.
     """
-    values = line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)
+    values = line.split(SEPARATOR)  # Use pre-computed separator (optimization)
     values = [strip_one_quote(value) for value in values]
     if len(values) != len(headers):
         print(f"Field count mismatch: expected {len(headers)}, got {len(values)} in row: {line}")
@@ -381,8 +375,7 @@ def split_rows_grouped(rows, group_field, n_splits=None, max_rows=None):
     """
     if not group_field:
         raise ValueError("group_field is required for grouped splitting")
-    print(f"Splitting {len(rows)} rows into {max_rows} in each file.")
-    print("-----")
+
     # Build groups
     groups = {}
     for r in rows:
@@ -390,8 +383,52 @@ def split_rows_grouped(rows, group_field, n_splits=None, max_rows=None):
         groups.setdefault(key, []).append(r)
 
     group_items = [(k, len(v), v) for k, v in groups.items()]
+    total_groups = len(group_items)
 
-    # If n_splits mode: use greedy balance (place largest groups first into smallest bucket)
+    # --- PRE-CALCULATE: Count how many files will be created ---
+    estimated_files = 0
+
+    if n_splits is not None:
+        # n_splits mode: exactly n_splits files (or fewer if not enough groups)
+        estimated_files = min(n_splits, total_groups)
+        print(f"Identified {total_groups:,} unique groups based on field '{group_field}'.")
+        print(f"Splitting into {estimated_files} file(s) (even distribution).")
+
+    elif max_rows is not None:
+        if max_rows <= 0:
+            raise ValueError("max_rows must be >= 1")
+
+        # Simulate max_rows packing to count files
+        oversized_count = 0
+        normal_bucket_count = 0
+        current_bucket_size = 0
+
+        # Sort by size descending (same as actual logic)
+        sorted_items = sorted(group_items, key=lambda x: x[1], reverse=True)
+
+        for _, size, _ in sorted_items:
+            if size > max_rows:
+                oversized_count += 1
+            else:
+                if current_bucket_size + size > max_rows and current_bucket_size > 0:
+                    normal_bucket_count += 1
+                    current_bucket_size = 0
+                current_bucket_size += size
+
+        # Count the last normal bucket if it has anything
+        if current_bucket_size > 0:
+            normal_bucket_count += 1
+
+        estimated_files = oversized_count + normal_bucket_count
+
+        print(f"Identified {total_groups:,} unique groups based on field '{group_field}'.")
+        if oversized_count > 0:
+            print(f"⚠️  {oversized_count:,} group(s) exceed max_rows ({max_rows:,}) and will each get their own file.")
+        print(f"Estimated output: {estimated_files:,} file(s).")
+
+    print("-----")
+
+    # --- ACTUAL SPLIT LOGIC (unchanged) ---
     if n_splits is not None:
         if n_splits <= 0:
             raise ValueError("n_splits must be >= 1")
@@ -406,11 +443,7 @@ def split_rows_grouped(rows, group_field, n_splits=None, max_rows=None):
             buckets[min_idx] = (buckets[min_idx][0] + size, buckets[min_idx][1])
         return [b[1] for b in buckets]
 
-    # If max_rows mode: fill sequential buckets until max reached, start new bucket
     if max_rows is not None:
-        if max_rows <= 0:
-            raise ValueError("max_rows must be >= 1")
-
         buckets = []
         current_bucket = []
         current_size = 0
@@ -464,7 +497,7 @@ def compare_dat_files(file1_path, file2_path, MAP=None):
         rows = []
         for i, line in enumerate(read_dat_file_smart(file_path, encoding)):
             if i == 0:
-                headers = [strip_one_quote(h) for h in line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+                headers = [strip_one_quote(h) for h in line.split(SEPARATOR)]
             else:
                 parsed = parse_line(line, headers)
                 if parsed:
@@ -550,7 +583,7 @@ def replace_header_and_collect(input_file_path, header_map, encoding, is_replace
 
     for i, line in enumerate(read_dat_file_smart(input_file_path, encoding)):
         if i == 0:
-            headers = [strip_one_quote(h) for h in line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+            headers = [strip_one_quote(h) for h in line.split(SEPARATOR)]
             validate_headers(headers, os.path.basename(input_file_path))
             new_headers = [header_map.get(h, h) for h in headers] if header_map else headers
 
@@ -610,8 +643,12 @@ def read_csv(filepath,  encoding=None):
 
     return headers, rows
 
-# === Merge DAT Files ===
+# === Merge DAT Files (optimized) ===
 def Merge_dats(merge_file, args):
+    """
+    Merge multiple DAT files, grouping by header hash.
+    Optimized to reduce redundant file reads.
+    """
     if not os.path.isfile(merge_file):
         print(f"❌ Merge list file not found: {merge_file}")
         return
@@ -634,38 +671,52 @@ def Merge_dats(merge_file, args):
         if encoding in ['Error', 'No File']:
             excluded_files.append(path)
             continue
+        
+        # OPTIMIZED: Single pass to read headers + rows + validate
+        rows = []
+        headers = None
+        header_hash = None
+        is_valid = True
+        header_count = 0
+        
         try:
-            line_iter = read_dat_file_smart(path, encoding)
-            header_line = next(line_iter)
-            headers = [strip_one_quote(h) for h in header_line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
-            validate_headers(headers, os.path.basename(path))
+            for i, line in enumerate(read_dat_file_smart(path, encoding)):
+                if i == 0:
+                    # Parse and validate headers
+                    headers = [strip_one_quote(h) for h in line.split(SEPARATOR)]
+                    validate_headers(headers, os.path.basename(path))
+                    header_hash = hashlib.sha256("||".join(headers).encode()).hexdigest()
+                    header_count = len(headers)
+                    continue
+                
+                # Parse row
+                values = line.split(SEPARATOR)
+                values = [strip_one_quote(v) for v in values]
+                
+                # Validate field count (inline validation)
+                if len(values) != header_count:
+                    print(f"⚠️ Field count mismatch in {path}: expected {header_count}, got {len(values)}")
+                    is_valid = False
+                    continue
+                
+                parsed = {header: value for header, value in zip(headers, values)}
+                rows.append(parsed)
         except Exception as e:
-            print(f"❌ Failed to read headers from {path}: {e}")
+            print(f"❌ Failed to read {path}: {e}")
             excluded_files.append(path)
             continue
-
-        if not file_has_valid_rows(path, headers, encoding):
+        
+        # Check if we got valid data
+        if headers is None or not is_valid:
             print(f"⚠️ Invalid row structure detected, excluding file: {path}")
             excluded_files.append(path)
             continue
-        # Create a hash of the headers
-        header_hash = hashlib.sha256("||".join(headers).encode()).hexdigest()
-
-        # Collect rows
-        rows = []
-        for i, line in enumerate(read_dat_file_smart(path, encoding)):
-            if i == 0:
-                continue  # skip header
-            parsed = parse_line(line, headers)
-            if parsed:
-                rows.append(parsed)
-
+        
+        # Add to grouped files
         grouped_files[header_hash].append((path, headers, rows))
         
-    #m_EXPORT_ENCODING = 'utf-8-sig'  # Set default export encoding for merged files
     output_dir = args.output_dir or os.path.dirname(merge_file)
-
-    group_log = [] # List to keep track of merged groups and files
+    group_log = []
 
     # Export merged groups
     for idx, (header_hash, files_info) in enumerate(grouped_files.items(), 1):
@@ -673,7 +724,7 @@ def Merge_dats(merge_file, args):
         all_rows = []
         for path, headers, rows in files_info:
             all_rows.extend(rows)
-            group_log.append({"Group": f"merged_group_{idx}", "File": path,"RowCount": len(rows)})
+            group_log.append({"Group": f"merged_group_{idx}", "File": path, "RowCount": len(rows)})
         
         fmt = "dat"
         if args.tsv:
@@ -681,7 +732,7 @@ def Merge_dats(merge_file, args):
         elif args.csv:
             fmt = "csv"
         # Create output path for merged group
-        output_base = get_output_path(merge_file, f"_group_{idx}", "."+fmt, output_dir)
+        output_base = get_output_path(merge_file, f"_group_{idx}", "." + fmt, output_dir)
         print(f"✅ Merging group {idx} with {len(files_info)} files ({len(all_rows)} total rows)")
         export_data(all_headers, all_rows, output_base, fmt=fmt, encoding=EXPORT_ENCODING)
 
@@ -697,11 +748,15 @@ def Merge_dats(merge_file, args):
 
 # === Delete Rows ===
 def delete_rows(input_file, delete_file, args):
+    """
+    Delete rows in a single pass (optimization).
+    Combines header reading, validation, value gathering, and filtering into one file iteration.
+    """
     input_name = os.path.splitext(os.path.basename(input_file))[0]
     input_dir = os.path.dirname(input_file)
     
     # Detect input encoding
-    d_Export_ENCODING = detect_encoding(input_file, os.path.basename(input_file))  # Default export encoding for deleted rows
+    d_Export_ENCODING = detect_encoding(input_file, os.path.basename(input_file))
     
     # Load delete values
     delete_encoding = detect_encoding(delete_file, os.path.basename(delete_file))
@@ -716,47 +771,62 @@ def delete_rows(input_file, delete_file, args):
 
     print(f"🧹 Will delete rows where '{field}' has one of the values: {', '.join(delete_values_list)}")
 
-    # Read headers
-    line_iter = read_dat_file_smart(input_file, d_Export_ENCODING)
-    header_line = next(line_iter)
-    headers = [strip_one_quote(h) for h in header_line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
-
-    if field not in headers:
-        print(f"❌ Field '{field}' not found in input file headers: {headers}")
-        return
-
-    if not file_has_valid_rows(input_file, headers, d_Export_ENCODING):
-        print(f"❌ Input file has invalid rows. Aborting delete operation.")
-        return
-
-    # Gather all values present in the DAT file for the target field
+    # SINGLE-PASS OPTIMIZATION: Combine all operations into one file read
+    kept_rows = []
+    deleted_rows = []
     present_values = set()
-    all_rows = []
+    headers = None
+    header_count = 0
+    row_num = 0
+    is_valid = True
+
     for i, line in enumerate(read_dat_file_smart(input_file, d_Export_ENCODING)):
         if i == 0:
+            # Parse and validate headers
+            headers = [strip_one_quote(h) for h in line.split(SEPARATOR)]
+            validate_headers(headers, os.path.basename(input_file))
+            
+            if field not in headers:
+                print(f"❌ Field '{field}' not found in input file headers: {headers}")
+                return
+            
+            header_count = len(headers)
             continue
-        parsed = parse_line(line, headers)
-        if parsed:
-            present_values.add(parsed.get(field, ""))
-            all_rows.append(parsed)
-
-    # Check for missing delete values
+        
+        # Parse the row
+        values = line.split(SEPARATOR)
+        values = [strip_one_quote(v) for v in values]
+        
+        # Field count validation (same as parse_line, but inline for efficiency)
+        if len(values) != header_count:
+            print(f"⚠️ Field count mismatch: expected {header_count}, got {len(values)} in row: {line[:200]}...")
+            is_valid = False
+            continue
+        
+        # Create row dict
+        parsed = {header: value for header, value in zip(headers, values)}
+        row_num += 1
+        
+        # Track present values
+        field_value = parsed.get(field, "")
+        present_values.add(field_value)
+        
+        # Filter into kept or deleted
+        if field_value in delete_values_set:
+            deleted_rows.append(parsed)
+        else:
+            kept_rows.append(parsed)
+    
+    # Check for missing delete values (after single pass)
     missing_values = delete_values_set - present_values
     if missing_values:
         print(f"⚠️ The following value(s) for '{field}' were not found in the DAT file: {', '.join(missing_values)}")
-
-    # Filter rows
-    kept_rows = []
-    deleted_rows = []
-    for i, line in enumerate(read_dat_file_smart(input_file, d_Export_ENCODING)):
-        if i == 0:
-            continue
-        parsed = parse_line(line, headers)
-        if parsed:
-            if parsed.get(field) in delete_values_set:
-                deleted_rows.append(parsed)
-            else:
-                kept_rows.append(parsed)
+    
+    # If any rows had invalid structure, warn the user
+    if not is_valid:
+        print("⚠️ Some rows had invalid structure and were skipped.")
+    
+    # Export results
     fmt = "dat"
     if args.tsv:
         fmt = "tsv"
@@ -782,7 +852,7 @@ def select_fields_and_collect(input_file_path, selected_headers, encoding):
     for i, line in enumerate(read_dat_file_smart(input_file_path, encoding)):
         if i == 0:
             # Parse headers from first line
-            headers = [strip_one_quote(h) for h in line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+            headers = [strip_one_quote(h) for h in line.split(SEPARATOR)]
             # Filter headers based on selection
             new_headers = [h for h in headers if h in selected_headers]
         else:
@@ -796,7 +866,8 @@ def select_fields_and_collect(input_file_path, selected_headers, encoding):
 
 # === Join DAT Files ===
 def join_dat_files(file1_path, file2_path, encoding1, encoding2, key_field_string):
-    key_fields = [k.strip() for k in key_field_string.strip().split()]
+     # Split on commas instead of whitespace so field names can contain spaces
+    key_fields = [k.strip() for k in key_field_string.split(',') if k.strip()]
     headers1, rows1 = read_headers_and_rows(file1_path, encoding1)
     headers2, rows2 = read_headers_and_rows(file2_path, encoding2)
 
@@ -913,7 +984,7 @@ def file_has_valid_rows(file_path, headers, encoding):
     for i, line in enumerate(read_dat_file_smart(file_path, encoding)):
         if i == 0:
             continue
-        values = line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)
+        values = line.split(SEPARATOR)
         values = [strip_one_quote(value) for value in values]
         if len(values) != len(headers):
             return False
@@ -933,6 +1004,148 @@ def validate_headers(headers, source="Input"):
         print(f"❌ Duplicate header(s) found in {source}: {', '.join(duplicates)}")
         sys.exit(2)
 
+
+# === STREAMING EXPORT FUNCTIONS (FAST PATH) ===
+# These validate field counts, check Excel limits, and write directly
+# without ever creating dicts or accumulating rows in memory.
+
+def _print_excel_warnings(excel_warnings, excel_warned, max_excel_warnings=20):
+    if not excel_warnings:
+        return
+    print("════════════════════════════════════════════════════════════════════════════════════════════════════════")
+    print(f"{'FieldName':<<15}{'RowNo.':<<10}{'CurrentLength':<<15}")
+    for h, row_idx, length in excel_warnings:
+        print(f"{h:<15}{row_idx:<10}{length:<15}")
+    if excel_warned >= max_excel_warnings:
+        print(f"...Further warnings suppressed. Only first {max_excel_warnings} shown.")
+    print("Warning: Excel may not display these cells correctly. Consider truncating or splitting.")
+    print("════════════════════════════════════════════════════════════════════════════════════════════════════════")
+
+
+def stream_dat_to_csv(input_path, output_path, encoding):
+    sep = QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR
+    excel_warnings = []
+    max_excel_warnings = 20
+    excel_warned = 0
+
+    with open(output_path, 'w', encoding=encoding, newline='', buffering=1024*1024) as out:
+        line_iter = read_dat_file_smart(input_path, encoding)
+        header_line = next(line_iter)
+        headers = [strip_one_quote(h) for h in header_line.split(sep)]
+        header_count = len(headers)
+        validate_headers(headers, os.path.basename(input_path))
+
+        # Write header (QUOTE_ALL style)
+        out.write(','.join(f'"{h.replace(chr(34), chr(34)*2)}"' for h in headers) + '\r\n')
+
+        row_count = 0
+        for line in line_iter:
+            fields = line.split(sep)
+            fields = [strip_one_quote(f) for f in fields]
+
+            # Field count validation (same as parse_line, but streaming)
+            if len(fields) != header_count:
+                print(f"⚠️ Field count mismatch: expected {header_count}, got {len(fields)} in row: {line[:200]}...")
+                continue
+
+            row_count += 1
+
+            # Excel warning (streaming, bounded memory)
+            if excel_warned < max_excel_warnings:
+                for idx, field in enumerate(fields):
+                    if len(field) > 32767:
+                        excel_warnings.append((headers[idx], row_count + 1, len(field)))
+                        excel_warned += 1
+                        if excel_warned >= max_excel_warnings:
+                            break
+
+            # Write row
+            out.write(','.join(f'"{f.replace(chr(34), chr(34)*2)}"' for f in fields) + '\r\n')
+
+    _print_excel_warnings(excel_warnings, excel_warned)
+    print(f"Exported {row_count} rows to {output_path}")
+
+
+def stream_dat_to_tsv(input_path, output_path, encoding):
+    sep = QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR
+    excel_warnings = []
+    max_excel_warnings = 20
+    excel_warned = 0
+
+    with open(output_path, 'w', encoding=encoding, newline='', buffering=1024*1024) as out:
+        line_iter = read_dat_file_smart(input_path, encoding)
+        header_line = next(line_iter)
+        headers = [strip_one_quote(h) for h in header_line.split(sep)]
+        header_count = len(headers)
+        validate_headers(headers, os.path.basename(input_path))
+
+        out.write('\t'.join(f'"{h.replace(chr(34), chr(34)*2)}"' for h in headers) + '\r\n')
+
+        row_count = 0
+        for line in line_iter:
+            fields = line.split(sep)
+            fields = [strip_one_quote(f) for f in fields]
+
+            if len(fields) != header_count:
+                print(f"⚠️ Field count mismatch: expected {header_count}, got {len(fields)} in row: {line[:200]}...")
+                continue
+
+            row_count += 1
+
+            if excel_warned < max_excel_warnings:
+                for idx, field in enumerate(fields):
+                    if len(field) > 32767:
+                        excel_warnings.append((headers[idx], row_count + 1, len(field)))
+                        excel_warned += 1
+                        if excel_warned >= max_excel_warnings:
+                            break
+
+            out.write('\t'.join(f'"{f.replace(chr(34), chr(34)*2)}"' for f in fields) + '\r\n')
+
+    _print_excel_warnings(excel_warnings, excel_warned)
+    print(f"Exported {row_count} rows to {output_path}")
+
+
+def stream_dat_to_dat(input_path, output_path, encoding):
+    sep = QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR
+    excel_warnings = []
+    max_excel_warnings = 20
+    excel_warned = 0
+
+    with open(output_path, 'w', encoding=encoding, newline='', buffering=1024*1024) as out:
+        line_iter = read_dat_file_smart(input_path, encoding)
+        header_line = next(line_iter)
+        headers = [strip_one_quote(h) for h in header_line.split(sep)]
+        header_count = len(headers)
+        validate_headers(headers, os.path.basename(input_path))
+
+        out.write(f"{QUOTE_CHAR}{sep.join(headers)}{QUOTE_CHAR}\r\n")
+
+        row_count = 0
+        for line in line_iter:
+            fields = line.split(sep)
+            fields = [strip_one_quote(f) for f in fields]
+
+            if len(fields) != header_count:
+                print(f"⚠️ Field count mismatch: expected {header_count}, got {len(fields)} in row: {line[:200]}...")
+                continue
+
+            row_count += 1
+
+            if excel_warned < max_excel_warnings:
+                for idx, field in enumerate(fields):
+                    if len(field) > 32767:
+                        excel_warnings.append((headers[idx], row_count + 1, len(field)))
+                        excel_warned += 1
+                        if excel_warned >= max_excel_warnings:
+                            break
+
+            out.write(f"{QUOTE_CHAR}{sep.join(fields)}{QUOTE_CHAR}\r\n")
+
+    _print_excel_warnings(excel_warnings, excel_warned)
+    print(f"Exported {row_count} rows to {output_path}")
+
+
 # === Handler functions ===
 
 def handle_convert(args):
@@ -941,12 +1154,26 @@ def handle_convert(args):
         sys.exit(2)
     Encode = detect_encoding(args.input_file, os.path.basename(args.input_file))
     ext = os.path.splitext(args.input_file)[1][1:]
+    fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
+
+    # FAST STREAMING PATH: DAT input with no transforms/splits/grouping
+    if ext != 'csv' and not args.split and not args.max_rows and not args.group_by and not args.replace_header:
+        suffix = "_converted"
+        output_path = get_output_path(args.input_file, suffix, "." + fmt, args.output_dir, args.filename)
+
+        if fmt == "csv":
+            stream_dat_to_csv(args.input_file, output_path, Encode)
+        elif fmt == "tsv":
+            stream_dat_to_tsv(args.input_file, output_path, Encode)
+        else:
+            stream_dat_to_dat(args.input_file, output_path, Encode)
+        return
+
+    # SLOW PATH: CSV input or operations requiring in-memory structures
     if ext == 'csv':
         headers, rows = read_csv(args.input_file, Encode)
     else:
         headers, rows = replace_header_and_collect(args.input_file, {}, Encode)
-
-    fmt = "csv" if args.csv else "tsv" if args.tsv else "dat"
 
     # Splitting behavior
     if args.split or args.max_rows:
@@ -1069,7 +1296,7 @@ def handle_reorder_header(args):
         print(f"❌ Input file appears to be empty: {args.input_file}")
         sys.exit(2)
 
-    headers = [strip_one_quote(h) for h in header_line.split(QUOTE_CHAR + FIELD_SEP + QUOTE_CHAR)]
+    headers = [strip_one_quote(h) for h in header_line.split(SEPARATOR)]
     validate_headers(headers, os.path.basename(args.input_file))
 
     # Check file row integrity
@@ -1109,7 +1336,7 @@ def print_logo():
  / _// _ \(_-< _ `/ _ \
 /___/_//_/___|_,_/_//_/
     -----Author: Ehsan
-    Version: 3.2.0
+    Version: 3.4.0
     Date: 2025-07-27
     DAT File Converter Utility
     GitHub: https://github.com/MdEhsanAhsan/CustomTextParser/tree/Cython_Version
@@ -1138,7 +1365,7 @@ def get_arguments():
     compare_group = parser.add_argument_group("Comparison and Join Options")
     compare_group.add_argument("--compare", "--c", action="store_true", help="Compare two DAT files")
     compare_group.add_argument("--mapping", "--m", metavar="MAPPING_FILE", help="Header mapping file for comparison")
-    compare_group.add_argument("--key", metavar="KEY_FIELDS", help="Key field(s) for joining. e.g., --key \"User ID\"")
+    compare_group.add_argument("--key", metavar="KEY_FIELDS", help='Key field(s) for joining. Use commas for multiple keys. e.g., --key "User ID" or --key "User ID,First Name"')
     compare_group.add_argument("--join", action="store_true", help="Join two DAT files into a single file based on Key Field")
 
     # 🧩 Data Transformation Options
